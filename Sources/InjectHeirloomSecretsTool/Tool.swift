@@ -70,8 +70,25 @@ struct InjectHeirloomSecretsTool {
     }
 
     private static func encodeSwiftLiteral(_ value: String) -> String {
-        let encoded = try? JSONEncoder().encode(value)
-        return encoded.flatMap { String(data: $0, encoding: .utf8) } ?? "\"\""
+        var result = "\""
+        for scalar in value.unicodeScalars {
+            switch scalar {
+            case "\\": result += "\\\\"
+            case "\"": result += "\\\""
+            case "\n": result += "\\n"
+            case "\r": result += "\\r"
+            case "\t": result += "\\t"
+            case "\0": result += "\\0"
+            default:
+                if scalar.value < 0x20 || scalar.value == 0x7F {
+                    result += String(format: "\\u{%X}", scalar.value)
+                } else {
+                    result.unicodeScalars.append(scalar)
+                }
+            }
+        }
+        result += "\""
+        return result
     }
 
     private static func writeAtomic(_ contents: String, to path: String) {
