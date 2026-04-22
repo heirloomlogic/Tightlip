@@ -4,7 +4,7 @@ SwiftPM build-tool plugin that generates a typed Swift enum of secrets from envi
 
 ## Why
 
-Each Heirloom Logic app needs its own API keys (RevenueCat, HMAC, etc.). Without this plugin, every app reinvents the mechanism (shell script + gitignore entry + build phase). With it, adoption is declarative: add the plugin and drop a JSON config.
+Each Heirloom Logic app needs its own API keys (RevenueCat, HMAC, etc.). Without this plugin, every app reinvents the mechanism (shell script + gitignore entry + build phase). With it, adoption is declarative: add the plugin and drop a small YAML config.
 
 ## Adoption
 
@@ -21,8 +21,8 @@ Switch to a version rule once 1.0.0 is cut. Local references (`Add Local...`) ar
 
 1. Add the package as a local reference (`File > Add Package Dependencies... > Add Local...`), pointing at `HeirloomSecrets/` — or use the remote `branch = main` setup from the Versioning note above.
 2. In the target's `Build Phases > Run Build Tool Plug-ins`, add `InjectHeirloomSecrets`.
-3. Create `<TargetName>/HeirloomSecrets.json` at the project root (the directory containing `.xcodeproj`). `<TargetName>` here is the target's *display name* — the plugin resolves this path on the filesystem using the display name, not through Xcode's group tree, so the file's location in the Project Navigator is irrelevant. In a stock project created from Xcode's app template this is just the `<TargetName>/` folder already at the top of the project. (See format below.)
-4. Reference the generated enum anywhere in your target: e.g. `FallowSecrets.revenueCatAPIKey`.
+3. Create `<TargetName>/HeirloomSecrets.yaml` at the project root (the directory containing `.xcodeproj`). `<TargetName>` here is the target's *display name* — the plugin resolves this path on the filesystem using the display name, not through Xcode's group tree, so the file's location in the Project Navigator is irrelevant. In a stock project created from Xcode's app template this is just the `<TargetName>/` folder already at the top of the project. (See format below.)
+4. Reference the generated enum anywhere in your target: e.g. `Secrets.revenueCatAPIKey`.
 
 ### SwiftPM package
 
@@ -33,27 +33,31 @@ Switch to a version rule once 1.0.0 is cut. Local references (`Add Local...`) ar
 )
 ```
 
-Then drop `HeirloomSecrets.json` at the target's source root (`Sources/MyApp/HeirloomSecrets.json`).
+Then drop `HeirloomSecrets.yaml` at the target's source root (`Sources/MyApp/HeirloomSecrets.yaml`).
 
 ## Config format
 
-```json
-{
-  "enumName": "FallowSecrets",
-  "secrets": {
-    "revenueCatAPIKey": { "envVar": "FALLOW_REVENUECAT_API_KEY" },
-    "optionalDevKey": { "envVar": "FALLOW_DEV_KEY", "allowMissing": true }
-  }
-}
+```yaml
+# HeirloomSecrets.yaml
+revenueCatAPIKey: FALLOW_REVENUECAT_API_KEY
+hmacSigningKey:   FALLOW_HMAC_KEY
 ```
 
-- `enumName` — the Swift enum emitted into your target's module.
-- `secrets` — a map of property name to `{ envVar, allowMissing? }`.
-- `allowMissing: true` — if the env var is unset, emit an empty-string literal and log a warning instead of failing the build. Default is false (fail-fast). The generated value is `""`, so callers should `guard !secret.isEmpty` before handing it to SDK initializers that reject empty strings (RevenueCat's `Purchases.configure(withAPIKey:)` is a common footgun). Reserve `allowMissing: true` for keys your app genuinely treats as optional.
+One line per secret: `<propertyName>: <ENV_VAR_NAME>`. The left side becomes a static property on `Secrets`; the right side is looked up in `ProcessInfo.processInfo.environment` at build time.
+
+The parser is deliberately strict — it accepts this exact shape and little else:
+
+- No leading whitespace on mapping lines. No tabs anywhere.
+- Both sides must be bare ASCII identifiers (`[A-Za-z_][A-Za-z0-9_]*`). No quoting syntax.
+- `#` at the start of a line is a comment. Inline comments after values aren't supported.
+- Blank lines are fine.
+- Duplicate keys, empty files, and anything else outside this grammar are parse errors with a line number.
+
+Every declared secret is required at build time. If an env var is unset, the build fails with a message pointing at the missing variable. For keys that should be truly optional, read them from `ProcessInfo` at runtime instead of declaring them here.
 
 ### Naming convention
 
-Heirloom Logic devs often have several apps checked out on the same machine, and bare names like `REVENUECAT_API_KEY` will collide across them. Prefix every env var with the app: `<APP_PREFIX>_<SECRET>` in screaming snake case — e.g. `FALLOW_REVENUECAT_API_KEY`, `ADAGIO_REVENUECAT_API_KEY`. The plugin doesn't enforce this (the `envVar` string is used as a raw `ProcessInfo` key), but every shipping Heirloom app follows it; do the same in new configs.
+Heirloom Logic devs often have several apps checked out on the same machine, and bare names like `REVENUECAT_API_KEY` will collide across them. Prefix every env var with the app: `<APP_PREFIX>_<SECRET>` in screaming snake case — e.g. `FALLOW_REVENUECAT_API_KEY`, `ADAGIO_REVENUECAT_API_KEY`. The plugin doesn't enforce this (the env var string is passed straight to `ProcessInfo`), but every shipping Heirloom app follows it; do the same in new configs.
 
 ## Generated output
 
@@ -61,10 +65,13 @@ Heirloom Logic devs often have several apps checked out on the same machine, and
 // Auto-generated by HeirloomSecrets. Do not edit.
 // Regenerated on every build from environment variables.
 
-nonisolated enum FallowSecrets {
+nonisolated enum Secrets {
+    static let hmacSigningKey: String = "..."
     static let revenueCatAPIKey: String = "test_abc..."
 }
 ```
+
+Properties are emitted in alphabetical order. The enum name is always `Secrets`; there is no way to override it per app.
 
 ## Setting environment variables
 
@@ -79,7 +86,7 @@ Scheme environment variables under `Run` do **not** propagate to build phases; t
 
 ## Troubleshooting
 
-**`error: environment variable X must be set to generate Y.Z`** — the env var is unset. Follow the section above for your launch context.
+**`error: environment variable X must be set to generate Secrets.Y`** — the env var is unset. Follow the section above for your launch context.
 
 **How do I know the env var is visible to the build?** Three quick checks, in order of reach:
 
@@ -87,6 +94,8 @@ Scheme environment variables under `Run` do **not** propagate to build phases; t
 - Add a temporary Run Script build phase with `echo "FALLOW_REVENUECAT_API_KEY=${FALLOW_REVENUECAT_API_KEY}"` and read the build log — shows exactly what the build process inherits, regardless of launcher.
 - For `xcodebuild` / SwiftPM CLI: `env | grep FALLOW_` in the invoking shell before running the build. If it's missing there, it won't be there for the build.
 
+**`error: HeirloomSecrets.yaml:N: ...`** — the config didn't parse. Check the line number against the grammar rules above. Common causes: tab characters (paste from a different editor), quoted values, nested indentation, inline comments after a value.
+
 **Plugin doesn't regenerate after changing env var** — ensure you're looking at the right target. The plugin regenerates whenever the config file or env var values change between builds. If behavior seems stuck, run `xcodebuild clean` to force a fresh generation.
 
-**Generated enum isn't visible in code** — confirm the plugin is attached to the target (Build Phases > Run Build Tool Plug-ins in Xcode), and that `HeirloomSecrets.json` is at the expected path.
+**Generated enum isn't visible in code** — confirm the plugin is attached to the target (Build Phases > Run Build Tool Plug-ins in Xcode), and that `HeirloomSecrets.yaml` is at the expected path.
