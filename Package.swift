@@ -11,8 +11,22 @@ let package = Package(
         .package(url: "https://github.com/HeirloomLogic/SwiftFormatPlugin", branch: "main"),
     ],
     targets: [
+        .target(
+            name: "HeirloomSecretsCore",
+            plugins: [
+                .plugin(name: "SwiftFormatBuildToolPlugin", package: "SwiftFormatPlugin")
+            ]
+        ),
+        .testTarget(
+            name: "HeirloomSecretsCoreTests",
+            dependencies: ["HeirloomSecretsCore"],
+            plugins: [
+                .plugin(name: "SwiftFormatBuildToolPlugin", package: "SwiftFormatPlugin")
+            ]
+        ),
         .executableTarget(
             name: "InjectHeirloomSecretsTool",
+            dependencies: ["HeirloomSecretsCore"],
             plugins: [
                 .plugin(name: "SwiftFormatBuildToolPlugin", package: "SwiftFormatPlugin")
             ]
