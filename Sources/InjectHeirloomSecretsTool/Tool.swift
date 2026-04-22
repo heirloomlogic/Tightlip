@@ -6,7 +6,7 @@ struct InjectHeirloomSecretsTool {
     static func main() {
         let args = CommandLine.arguments
         guard args.count == 3 else {
-            fail("usage: InjectHeirloomSecretsTool <config.yaml> <output.swift>")
+            fail("usage: InjectHeirloomSecretsTool <config.yml> <output.swift>")
         }
         let configPath = args[1]
         let outputPath = args[2]
@@ -18,7 +18,7 @@ struct InjectHeirloomSecretsTool {
             fail(
                 """
                 HeirloomSecrets config missing at \(configPath). Create a \
-                HeirloomSecrets.yaml at the target source root.
+                HeirloomSecrets.yml at the target source root.
                 """
             )
         } catch {

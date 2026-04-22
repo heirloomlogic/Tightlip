@@ -6,7 +6,7 @@ struct InjectHeirloomSecrets: BuildToolPlugin {
     func createBuildCommands(context: PluginContext, target: Target) async throws -> [Command] {
         guard let sourceTarget = target as? SourceModuleTarget else { return [] }
         let tool = try context.tool(named: "InjectHeirloomSecretsTool")
-        let configURL = sourceTarget.directoryURL.appending(path: "HeirloomSecrets.yaml")
+        let configURL = sourceTarget.directoryURL.appending(path: "HeirloomSecrets.yml")
         let outputURL = context.pluginWorkDirectoryURL.appending(path: "HeirloomSecrets.swift")
         return [
             makeCommand(
@@ -27,7 +27,7 @@ extension InjectHeirloomSecrets: XcodeBuildToolPlugin {
         let tool = try context.tool(named: "InjectHeirloomSecretsTool")
         let configURL = context.xcodeProject.directoryURL
             .appending(path: target.displayName)
-            .appending(path: "HeirloomSecrets.yaml")
+            .appending(path: "HeirloomSecrets.yml")
         let outputURL = context.pluginWorkDirectoryURL.appending(path: "HeirloomSecrets.swift")
         return [
             makeCommand(

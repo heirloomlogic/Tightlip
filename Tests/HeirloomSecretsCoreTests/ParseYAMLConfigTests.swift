@@ -6,7 +6,7 @@ struct ParseYAMLConfigTests {
     // MARK: Happy path
 
     @Test func parsesSingleMapping() throws {
-        let result = try parseYAMLConfig("revenueCatAPIKey: FALLOW_RC", path: "t.yaml")
+        let result = try parseYAMLConfig("revenueCatAPIKey: FALLOW_RC", path: "t.yml")
         #expect(result == [ParsedSecret(name: "revenueCatAPIKey", envVar: "FALLOW_RC")])
     }
 
@@ -15,13 +15,13 @@ struct ParseYAMLConfigTests {
             beta: B
             alpha: A
             """
-        let result = try parseYAMLConfig(text, path: "t.yaml")
+        let result = try parseYAMLConfig(text, path: "t.yml")
         #expect(result.map(\.name) == ["beta", "alpha"])
     }
 
     @Test func skipsBlankLines() throws {
         let text = "\n\nfoo: BAR\n\n"
-        let result = try parseYAMLConfig(text, path: "t.yaml")
+        let result = try parseYAMLConfig(text, path: "t.yml")
         #expect(result == [ParsedSecret(name: "foo", envVar: "BAR")])
     }
 
@@ -32,39 +32,39 @@ struct ParseYAMLConfigTests {
             foo: BAR
             # trailing
             """
-        let result = try parseYAMLConfig(text, path: "t.yaml")
+        let result = try parseYAMLConfig(text, path: "t.yml")
         #expect(result == [ParsedSecret(name: "foo", envVar: "BAR")])
     }
 
     @Test func handlesCRLFLineEndings() throws {
         let text = "foo: BAR\r\nbaz: QUX\r\n"
-        let result = try parseYAMLConfig(text, path: "t.yaml")
+        let result = try parseYAMLConfig(text, path: "t.yml")
         #expect(result.map(\.name) == ["foo", "baz"])
         #expect(result.map(\.envVar) == ["BAR", "QUX"])
     }
 
     @Test func allowsZeroSpacesAfterColon() throws {
-        let result = try parseYAMLConfig("foo:BAR", path: "t.yaml")
+        let result = try parseYAMLConfig("foo:BAR", path: "t.yml")
         #expect(result == [ParsedSecret(name: "foo", envVar: "BAR")])
     }
 
     @Test func allowsMultipleSpacesAfterColon() throws {
-        let result = try parseYAMLConfig("foo:     BAR", path: "t.yaml")
+        let result = try parseYAMLConfig("foo:     BAR", path: "t.yml")
         #expect(result == [ParsedSecret(name: "foo", envVar: "BAR")])
     }
 
     @Test func trimsTrailingSpacesOnValue() throws {
-        let result = try parseYAMLConfig("foo: BAR    ", path: "t.yaml")
+        let result = try parseYAMLConfig("foo: BAR    ", path: "t.yml")
         #expect(result == [ParsedSecret(name: "foo", envVar: "BAR")])
     }
 
     @Test func allowsDigitsAfterFirstCharInIdentifiers() throws {
-        let result = try parseYAMLConfig("apiKeyV2: FALLOW_V2_KEY", path: "t.yaml")
+        let result = try parseYAMLConfig("apiKeyV2: FALLOW_V2_KEY", path: "t.yml")
         #expect(result == [ParsedSecret(name: "apiKeyV2", envVar: "FALLOW_V2_KEY")])
     }
 
     @Test func allowsUnderscoreStartingIdentifiers() throws {
-        let result = try parseYAMLConfig("_k: _E", path: "t.yaml")
+        let result = try parseYAMLConfig("_k: _E", path: "t.yml")
         #expect(result == [ParsedSecret(name: "_k", envVar: "_E")])
     }
 
@@ -142,19 +142,19 @@ struct ParseYAMLConfigTests {
 
     @Test func parsePathAppearsInFormattedMessage() {
         do {
-            _ = try parseYAMLConfig("", path: "HeirloomSecrets.yaml")
+            _ = try parseYAMLConfig("", path: "HeirloomSecrets.yml")
             Issue.record("expected throw")
         } catch {
-            #expect(error.message.hasPrefix("HeirloomSecrets.yaml"))
+            #expect(error.message.hasPrefix("HeirloomSecrets.yml"))
         }
     }
 
     @Test func parseLineAppearsInFormattedMessage() {
         do {
-            _ = try parseYAMLConfig("foo: BAR\n\tbad: X", path: "cfg.yaml")
+            _ = try parseYAMLConfig("foo: BAR\n\tbad: X", path: "cfg.yml")
             Issue.record("expected throw")
         } catch {
-            #expect(error.message.contains("cfg.yaml:2:"))
+            #expect(error.message.contains("cfg.yml:2:"))
         }
     }
 
@@ -162,7 +162,7 @@ struct ParseYAMLConfigTests {
 
     private func expectParseError(
         _ text: String,
-        path: String = "t.yaml",
+        path: String = "t.yml",
         line expectedLine: Int?,
         reasonContains substring: String,
         sourceLocation: SourceLocation = #_sourceLocation

@@ -21,7 +21,7 @@ Switch to a version rule once 1.0.0 is cut. Local references (`Add Local...`) ar
 
 1. Add the package as a local reference (`File > Add Package Dependencies... > Add Local...`), pointing at `HeirloomSecrets/` — or use the remote `branch = main` setup from the Versioning note above.
 2. In the target's `Build Phases > Run Build Tool Plug-ins`, add `InjectHeirloomSecrets`.
-3. Create `<TargetName>/HeirloomSecrets.yaml` at the project root (the directory containing `.xcodeproj`). `<TargetName>` here is the target's *display name* — the plugin resolves this path on the filesystem using the display name, not through Xcode's group tree, so the file's location in the Project Navigator is irrelevant. In a stock project created from Xcode's app template this is just the `<TargetName>/` folder already at the top of the project. (See format below.)
+3. Create `<TargetName>/HeirloomSecrets.yml` at the project root (the directory containing `.xcodeproj`). `<TargetName>` here is the target's *display name* — the plugin resolves this path on the filesystem using the display name, not through Xcode's group tree, so the file's location in the Project Navigator is irrelevant. In a stock project created from Xcode's app template this is just the `<TargetName>/` folder already at the top of the project. (See format below.)
 4. Reference the generated enum anywhere in your target: e.g. `Secrets.revenueCatAPIKey`.
 
 ### SwiftPM package
@@ -33,12 +33,12 @@ Switch to a version rule once 1.0.0 is cut. Local references (`Add Local...`) ar
 )
 ```
 
-Then drop `HeirloomSecrets.yaml` at the target's source root (`Sources/MyApp/HeirloomSecrets.yaml`).
+Then drop `HeirloomSecrets.yml` at the target's source root (`Sources/MyApp/HeirloomSecrets.yml`).
 
 ## Config format
 
 ```yaml
-# HeirloomSecrets.yaml
+# HeirloomSecrets.yml
 revenueCatAPIKey: FALLOW_REVENUECAT_API_KEY
 hmacSigningKey:   FALLOW_HMAC_KEY
 ```
@@ -94,8 +94,8 @@ Scheme environment variables under `Run` do **not** propagate to build phases; t
 - Add a temporary Run Script build phase with `echo "FALLOW_REVENUECAT_API_KEY=${FALLOW_REVENUECAT_API_KEY}"` and read the build log — shows exactly what the build process inherits, regardless of launcher.
 - For `xcodebuild` / SwiftPM CLI: `env | grep FALLOW_` in the invoking shell before running the build. If it's missing there, it won't be there for the build.
 
-**`error: HeirloomSecrets.yaml:N: ...`** — the config didn't parse. Check the line number against the grammar rules above. Common causes: tab characters (paste from a different editor), quoted values, nested indentation, inline comments after a value.
+**`error: HeirloomSecrets.yml:N: ...`** — the config didn't parse. Check the line number against the grammar rules above. Common causes: tab characters (paste from a different editor), quoted values, nested indentation, inline comments after a value.
 
 **Plugin doesn't regenerate after changing env var** — ensure you're looking at the right target. The plugin regenerates whenever the config file or env var values change between builds. If behavior seems stuck, run `xcodebuild clean` to force a fresh generation.
 
-**Generated enum isn't visible in code** — confirm the plugin is attached to the target (Build Phases > Run Build Tool Plug-ins in Xcode), and that `HeirloomSecrets.yaml` is at the expected path.
+**Generated enum isn't visible in code** — confirm the plugin is attached to the target (Build Phases > Run Build Tool Plug-ins in Xcode), and that `HeirloomSecrets.yml` is at the expected path.
