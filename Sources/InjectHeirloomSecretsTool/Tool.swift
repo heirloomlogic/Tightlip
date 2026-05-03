@@ -26,11 +26,31 @@ struct InjectHeirloomSecretsTool {
         }
 
         do {
-            let parsed = try parseYAMLConfig(configText, path: configPath)
             let environment = ProcessInfo.processInfo.environment
-            let resolved = try parsed.map { try resolveSecret($0, environment: environment) }
-            let output = renderSecretsEnum(resolved)
+            let config = try parseYAMLConfig(configText, path: configPath)
+
+            let secrets: [ParsedSecret]
+            var envName: String?
+
+            switch config {
+            case .flat(let parsed):
+                secrets = parsed
+            case .sectioned(let sections):
+                let resolved = try resolveEnvironment(sections: sections, environment: environment)
+                envName = resolved
+                guard let section = sections.first(where: { $0.name == resolved }) else {
+                    fail("internal error: resolved environment '\(resolved)' not found in sections")
+                }
+                secrets = section.secrets
+            }
+
+            let resolved = try secrets.map { try resolveSecret($0, environment: environment) }
+            let output = renderSecretsEnum(resolved, environment: envName)
             try output.write(toFile: outputPath, atomically: true, encoding: .utf8)
+
+            if let envName {
+                FileHandle.standardError.write(Data("note: using environment '\(envName)'\n".utf8))
+            }
         } catch let error as ConfigError {
             fail(error.message)
         } catch {
