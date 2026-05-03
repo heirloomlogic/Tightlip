@@ -15,20 +15,38 @@ public struct ParsedSecret: Equatable, Sendable {
     }
 }
 
+/// The result of parsing a HeirloomSecrets YAML config file.
+public enum ParsedConfig: Equatable, Sendable {
+    /// Flat format: a simple list of property → env-var mappings.
+    case flat([ParsedSecret])
+
+    /// Sectioned format: named environments, each containing identical property sets.
+    case sectioned([(name: String, secrets: [ParsedSecret])])
+
+    /// Compares two parsed configs for structural equality.
+    public static func == (lhs: ParsedConfig, rhs: ParsedConfig) -> Bool {
+        switch (lhs, rhs) {
+        case (.flat(let a), .flat(let b)):
+            return a == b
+        case (.sectioned(let a), .sectioned(let b)):
+            guard a.count == b.count else { return false }
+            return zip(a, b).allSatisfy { $0.name == $1.name && $0.secrets == $1.secrets }
+        default:
+            return false
+        }
+    }
+}
+
 /// An error surfaced by the HeirloomSecrets tool during config parsing or env-var resolution.
 public enum ConfigError: Error, Equatable, Sendable {
     /// The config file did not match the accepted grammar.
-    ///
-    /// `path` is echoed back in ``message``. `line` is the 1-indexed offending line, or `nil`
-    /// for whole-file errors (e.g. a file with no declared secrets). `reason` is a short
-    /// human-readable explanation.
     case parse(path: String, line: Int?, reason: String)
 
     /// A declared secret's environment variable was not set when the build tool ran.
-    ///
-    /// `envVar` is the missing variable. `property` is the fully-qualified Swift property
-    /// name the value would have populated (e.g. `Secrets.revenueCatAPIKey`).
     case missingEnvironmentVariable(envVar: String, property: String)
+
+    /// The active environment could not be determined for a sectioned config.
+    case indeterminateEnvironment(available: [String], reason: String)
 
     /// Formatted message matching the `error:` output the CLI emits to stderr.
     public var message: String {
@@ -43,31 +61,69 @@ public enum ConfigError: Error, Equatable, Sendable {
                 environment variable \(envVar) must be set to generate \(property). \
                 Set it in your shell, ~/.zshenv (for Xcode.app), or your CI environment.
                 """
+        case .indeterminateEnvironment(let available, let reason):
+            return """
+                cannot determine environment: \(reason). \
+                Available environments: \(available.joined(separator: ", ")). \
+                Set HEIRLOOM_ENV to one of these values.
+                """
         }
     }
 }
 
-/// Parses a HeirloomSecrets YAML config into an ordered list of secrets.
+/// Parses a HeirloomSecrets YAML config, returning either a flat or sectioned result.
 ///
-/// The accepted grammar is intentionally minimal (see `README.md > Config format`):
-/// flat `name: ENV_VAR` mappings, `#` line comments, and blank lines. CRLF line
-/// endings are normalized to LF. Anything else is a parse error.
+/// The format is auto-detected from the first meaningful line:
+/// - If it matches `identifier:` with no value, the file is **sectioned** (environments).
+/// - Otherwise, it's the classic **flat** format.
 ///
 /// - Parameters:
 ///   - text: Full config file contents.
 ///   - path: Path of the config file, echoed in any thrown error.
-/// - Returns: Parsed secrets in source order.
+/// - Returns: A ``ParsedConfig`` representing the file contents.
 /// - Throws: ``ConfigError/parse(path:line:reason:)`` on any grammar violation.
-public func parseYAMLConfig(_ text: String, path: String) throws(ConfigError) -> [ParsedSecret] {
+public func parseYAMLConfig(_ text: String, path: String) throws(ConfigError) -> ParsedConfig {
+    let lines = text.components(separatedBy: "\n")
+    let normalized = lines.map { $0.hasSuffix("\r") ? String($0.dropLast()) : $0 }
+
+    let firstMeaningful = normalized.first {
+        let s = $0.trimmingCharacters(in: .whitespaces)
+        return !s.isEmpty && !s.hasPrefix("#")
+    }
+
+    guard let first = firstMeaningful else {
+        throw .parse(path: path, line: nil, reason: "no secrets declared")
+    }
+
+    if isSectionHeader(first) {
+        return .sectioned(try parseSectioned(normalized, path: path))
+    }
+    return .flat(try parseFlat(normalized, path: path))
+}
+
+/// Legacy convenience that returns secrets directly for flat configs.
+public func parseFlatYAMLConfig(_ text: String, path: String) throws(ConfigError) -> [ParsedSecret] {
+    let config = try parseYAMLConfig(text, path: path)
+    switch config {
+    case .flat(let secrets): return secrets
+    case .sectioned: throw .parse(path: path, line: nil, reason: "expected flat config but found environment sections")
+    }
+}
+
+private func isSectionHeader(_ line: String) -> Bool {
+    guard let first = line.first, !first.isWhitespace else { return false }
+    let stripped = line.trimmingCharacters(in: .init(charactersIn: " "))
+    guard stripped.hasSuffix(":") else { return false }
+    let name = String(stripped.dropLast())
+    return isIdentifier(name) && !stripped.contains(" ")
+}
+
+private func parseFlat(_ lines: [String], path: String) throws(ConfigError) -> [ParsedSecret] {
     var seen: [String: Int] = [:]
     var result: [ParsedSecret] = []
 
-    let lines = text.components(separatedBy: "\n")
-    for (idx, rawLineRaw) in lines.enumerated() {
+    for (idx, rawLine) in lines.enumerated() {
         let lineNumber = idx + 1
-        var rawLine = rawLineRaw
-        if rawLine.hasSuffix("\r") { rawLine.removeLast() }
-
         let stripped = rawLine.trimmingCharacters(in: .whitespaces)
         if stripped.isEmpty || stripped.hasPrefix("#") { continue }
 
@@ -108,6 +164,158 @@ public func parseYAMLConfig(_ text: String, path: String) throws(ConfigError) ->
         throw .parse(path: path, line: nil, reason: "no secrets declared")
     }
     return result
+}
+
+private func parseSectioned(
+    _ lines: [String],
+    path: String
+) throws(ConfigError) -> [(name: String, secrets: [ParsedSecret])] {
+    var sections: [(name: String, secrets: [ParsedSecret])] = []
+    var currentSection: String?
+    var currentSecrets: [ParsedSecret] = []
+    var seen: [String: Int] = [:]
+    var sectionNames: Set<String> = []
+
+    for (idx, rawLine) in lines.enumerated() {
+        let lineNumber = idx + 1
+        let stripped = rawLine.trimmingCharacters(in: .whitespaces)
+        if stripped.isEmpty || stripped.hasPrefix("#") { continue }
+
+        if rawLine.contains("\t") {
+            throw .parse(path: path, line: lineNumber, reason: "tab character not allowed; use spaces")
+        }
+
+        if rawLine.first.map({ !$0.isWhitespace }) ?? false {
+            // Top-level line — must be a section header.
+            guard isSectionHeader(rawLine) else {
+                throw .parse(
+                    path: path,
+                    line: lineNumber,
+                    reason: "expected section header '<env>:', got '\(stripped)'"
+                )
+            }
+            if let prev = currentSection {
+                if currentSecrets.isEmpty {
+                    throw .parse(path: path, line: lineNumber, reason: "section '\(prev)' has no secrets")
+                }
+                sections.append((name: prev, secrets: currentSecrets))
+            }
+            let name = String(stripped.dropLast())
+            if sectionNames.contains(name) {
+                throw .parse(path: path, line: lineNumber, reason: "duplicate section '\(name)'")
+            }
+            sectionNames.insert(name)
+            currentSection = name
+            currentSecrets = []
+            seen = [:]
+        } else {
+            // Indented line — must be inside a section.
+            guard currentSection != nil else {
+                throw .parse(
+                    path: path,
+                    line: lineNumber,
+                    reason: "unexpected indentation; every line must start at column 1"
+                )
+            }
+            guard
+                rawLine.hasPrefix("  ")
+                    && (rawLine.count < 3 || rawLine[rawLine.index(rawLine.startIndex, offsetBy: 2)] != " ")
+            else {
+                throw .parse(
+                    path: path,
+                    line: lineNumber,
+                    reason: "use exactly 2-space indent inside environment sections"
+                )
+            }
+            guard let (name, envVar) = splitMapping(stripped) else {
+                throw .parse(
+                    path: path,
+                    line: lineNumber,
+                    reason: "expected '  <name>: <ENV_VAR>', got '\(rawLine)'"
+                )
+            }
+            if let prior = seen[name] {
+                throw .parse(
+                    path: path,
+                    line: lineNumber,
+                    reason: "duplicate key '\(name)' (first defined on line \(prior))"
+                )
+            }
+            seen[name] = lineNumber
+            currentSecrets.append(ParsedSecret(name: name, envVar: envVar))
+        }
+    }
+
+    if let prev = currentSection {
+        if currentSecrets.isEmpty {
+            throw .parse(path: path, line: nil, reason: "section '\(prev)' has no secrets")
+        }
+        sections.append((name: prev, secrets: currentSecrets))
+    }
+
+    if sections.isEmpty {
+        throw .parse(path: path, line: nil, reason: "no secrets declared")
+    }
+
+    // Validate all sections have the same property names.
+    let referenceKeys = Set(sections[0].secrets.map(\.name))
+    for section in sections.dropFirst() {
+        let keys = Set(section.secrets.map(\.name))
+        if keys != referenceKeys {
+            let missing = referenceKeys.subtracting(keys).sorted()
+            let extra = keys.subtracting(referenceKeys).sorted()
+            var parts: [String] = []
+            if !missing.isEmpty { parts.append("missing \(missing.joined(separator: ", "))") }
+            if !extra.isEmpty { parts.append("unexpected \(extra.joined(separator: ", "))") }
+            throw .parse(
+                path: path,
+                line: nil,
+                reason: "section '\(section.name)' differs from '\(sections[0].name)': \(parts.joined(separator: "; "))"
+            )
+        }
+    }
+
+    return sections
+}
+
+/// Determines which environment section to use based on process environment.
+///
+/// Resolution order:
+/// 1. `HEIRLOOM_ENV` — explicit override, used directly.
+/// 2. `CONFIGURATION` (set by Xcode) — inferred when exactly two sections exist and one is
+///    named `prod` or `production`. `Release` maps to that section; anything else maps to the other.
+/// 3. Error if neither mechanism resolves.
+public func resolveEnvironment(
+    sections: [(name: String, secrets: [ParsedSecret])],
+    environment: [String: String]
+) throws(ConfigError) -> String {
+    let sectionNames = sections.map(\.name)
+
+    if let explicit = environment["HEIRLOOM_ENV"], !explicit.isEmpty {
+        guard sectionNames.contains(explicit) else {
+            throw .indeterminateEnvironment(
+                available: sectionNames,
+                reason: "HEIRLOOM_ENV='\(explicit)' does not match any section"
+            )
+        }
+        return explicit
+    }
+
+    if sectionNames.count == 2 {
+        let prodName = sectionNames.first { $0 == "prod" || $0 == "production" }
+        if let prodName, let otherName = sectionNames.first(where: { $0 != prodName }) {
+            let configuration = environment["CONFIGURATION"] ?? ""
+            if configuration.lowercased() == "release" {
+                return prodName
+            }
+            return otherName
+        }
+    }
+
+    throw .indeterminateEnvironment(
+        available: sectionNames,
+        reason: "HEIRLOOM_ENV is not set and automatic inference is not possible"
+    )
 }
 
 private func splitMapping(_ s: String) -> (String, String)? {
@@ -192,18 +400,25 @@ public func encodeSwiftLiteral(_ value: String) -> String {
 /// Properties are emitted in alphabetical order; values are escaped via
 /// ``encodeSwiftLiteral(_:)``.
 ///
-/// - Parameter resolved: Name/value pairs.
+/// - Parameters:
+///   - resolved: Name/value pairs.
+///   - environment: If non-nil, annotates the header with the active environment name.
 /// - Returns: Complete Swift source text, terminated with a trailing newline.
-public func renderSecretsEnum(_ resolved: [(name: String, value: String)]) -> String {
+public func renderSecretsEnum(
+    _ resolved: [(name: String, value: String)],
+    environment: String? = nil
+) -> String {
     let properties =
         resolved
         .sorted { $0.name < $1.name }
         .map { "    static let \($0.name): String = \(encodeSwiftLiteral($0.value))" }
         .joined(separator: "\n")
 
+    let envLine = environment.map { "\n// Environment: \($0)" } ?? ""
+
     return """
         // Auto-generated by HeirloomSecrets. Do not edit.
-        // Regenerated on every build from environment variables.
+        // Regenerated on every build from environment variables.\(envLine)
 
         nonisolated enum Secrets {
         \(properties)

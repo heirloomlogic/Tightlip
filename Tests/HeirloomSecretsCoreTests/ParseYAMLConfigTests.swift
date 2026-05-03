@@ -1,12 +1,12 @@
 import HeirloomSecretsCore
 import Testing
 
-@Suite("parseYAMLConfig")
-struct ParseYAMLConfigTests {
+@Suite("parseYAMLConfig — flat format")
+struct ParseYAMLConfigFlatTests {
     // MARK: Happy path
 
     @Test func parsesSingleMapping() throws {
-        let result = try parseYAMLConfig("revenueCatAPIKey: FALLOW_RC", path: "t.yml")
+        let result = try parseFlatYAMLConfig("revenueCatAPIKey: FALLOW_RC", path: "t.yml")
         #expect(result == [ParsedSecret(name: "revenueCatAPIKey", envVar: "FALLOW_RC")])
     }
 
@@ -15,13 +15,13 @@ struct ParseYAMLConfigTests {
             beta: B
             alpha: A
             """
-        let result = try parseYAMLConfig(text, path: "t.yml")
+        let result = try parseFlatYAMLConfig(text, path: "t.yml")
         #expect(result.map(\.name) == ["beta", "alpha"])
     }
 
     @Test func skipsBlankLines() throws {
         let text = "\n\nfoo: BAR\n\n"
-        let result = try parseYAMLConfig(text, path: "t.yml")
+        let result = try parseFlatYAMLConfig(text, path: "t.yml")
         #expect(result == [ParsedSecret(name: "foo", envVar: "BAR")])
     }
 
@@ -32,39 +32,39 @@ struct ParseYAMLConfigTests {
             foo: BAR
             # trailing
             """
-        let result = try parseYAMLConfig(text, path: "t.yml")
+        let result = try parseFlatYAMLConfig(text, path: "t.yml")
         #expect(result == [ParsedSecret(name: "foo", envVar: "BAR")])
     }
 
     @Test func handlesCRLFLineEndings() throws {
         let text = "foo: BAR\r\nbaz: QUX\r\n"
-        let result = try parseYAMLConfig(text, path: "t.yml")
+        let result = try parseFlatYAMLConfig(text, path: "t.yml")
         #expect(result.map(\.name) == ["foo", "baz"])
         #expect(result.map(\.envVar) == ["BAR", "QUX"])
     }
 
     @Test func allowsZeroSpacesAfterColon() throws {
-        let result = try parseYAMLConfig("foo:BAR", path: "t.yml")
+        let result = try parseFlatYAMLConfig("foo:BAR", path: "t.yml")
         #expect(result == [ParsedSecret(name: "foo", envVar: "BAR")])
     }
 
     @Test func allowsMultipleSpacesAfterColon() throws {
-        let result = try parseYAMLConfig("foo:     BAR", path: "t.yml")
+        let result = try parseFlatYAMLConfig("foo:     BAR", path: "t.yml")
         #expect(result == [ParsedSecret(name: "foo", envVar: "BAR")])
     }
 
     @Test func trimsTrailingSpacesOnValue() throws {
-        let result = try parseYAMLConfig("foo: BAR    ", path: "t.yml")
+        let result = try parseFlatYAMLConfig("foo: BAR    ", path: "t.yml")
         #expect(result == [ParsedSecret(name: "foo", envVar: "BAR")])
     }
 
     @Test func allowsDigitsAfterFirstCharInIdentifiers() throws {
-        let result = try parseYAMLConfig("apiKeyV2: FALLOW_V2_KEY", path: "t.yml")
+        let result = try parseFlatYAMLConfig("apiKeyV2: FALLOW_V2_KEY", path: "t.yml")
         #expect(result == [ParsedSecret(name: "apiKeyV2", envVar: "FALLOW_V2_KEY")])
     }
 
     @Test func allowsUnderscoreStartingIdentifiers() throws {
-        let result = try parseYAMLConfig("_k: _E", path: "t.yml")
+        let result = try parseFlatYAMLConfig("_k: _E", path: "t.yml")
         #expect(result == [ParsedSecret(name: "_k", envVar: "_E")])
     }
 
@@ -105,7 +105,10 @@ struct ParseYAMLConfigTests {
     }
 
     @Test func missingValueIsParseError() {
-        expectParseError("foo:", line: 1, reasonContains: "expected")
+        // "foo:" alone is now detected as a section header (sectioned format).
+        // The error becomes "section 'foo' has no secrets" rather than a flat-format
+        // parse error. Verify it still errors.
+        expectParseError("foo:", line: nil, reasonContains: "no secrets")
     }
 
     @Test func missingColonIsParseError() {
