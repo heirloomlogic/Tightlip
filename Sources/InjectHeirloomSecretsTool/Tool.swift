@@ -52,6 +52,17 @@ struct InjectHeirloomSecretsTool {
                 FileHandle.standardError.write(Data("note: using environment '\(envName)'\n".utf8))
             }
         } catch let error as ConfigError {
+            if case .missingEnvironmentVariable(let envVar, _) = error {
+                let environment = ProcessInfo.processInfo.environment
+                let prefix = envVar.split(separator: "_").first.map(String.init) ?? envVar
+                let visible = environment.keys
+                    .filter { $0.hasPrefix("\(prefix)_") }
+                    .sorted()
+                let line =
+                    "note: \(visible.count) env var(s) with prefix '\(prefix)_' visible to the build: "
+                    + "[\(visible.joined(separator: ", "))]; total env count = \(environment.count)\n"
+                FileHandle.standardError.write(Data(line.utf8))
+            }
             fail(error.message)
         } catch {
             fail("failed to write \(outputPath): \(error)")
