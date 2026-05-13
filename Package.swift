@@ -4,6 +4,7 @@ import PackageDescription
 
 let package = Package(
     name: "HeirloomSecrets",
+    platforms: [.macOS(.v10_15)],
     products: [
         .plugin(name: "InjectHeirloomSecrets", targets: ["InjectHeirloomSecrets"]),
     ],
