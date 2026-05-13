@@ -14,7 +14,7 @@ Add the package as a dependency:
 
 ```swift
 // Package.swift
-.package(url: "https://github.com/heirloomlogic/Tightlip.git", from: "1.0.0"),
+.package(url: "https://github.com/heirloomlogic/Tightlip", from: "1.0.0"),
 ```
 
 Attach the plugin to a target:
@@ -30,7 +30,7 @@ Drop `Secrets.yml` at the target's source root, e.g. `Sources/MyApp/Secrets.yml`
 
 ### Xcode project
 
-1. **File → Add Package Dependencies...** → paste `https://github.com/heirloomlogic/Tightlip.git` → set Dependency Rule to **Up to Next Major** from `1.0.0`. (**Add Local...** also works for vendored checkouts.)
+1. **File → Add Package Dependencies...** → paste `https://github.com/heirloomlogic/Tightlip` → set Dependency Rule to **Up to Next Major** from `1.0.0`. (**Add Local...** also works for vendored checkouts.)
 2. In the target's **Build Phases → Run Build Tool Plug-ins**, add **Lipservice**.
 3. Create `<TargetName>/Secrets.yml` at the project root (the directory containing `.xcodeproj`). `<TargetName>` is the target's *display name*; the plugin resolves the path on the filesystem, not through Xcode's group tree, so the file's position in the Project Navigator is irrelevant. For a stock app template this is the `<TargetName>/` folder already at the top of the project.
 4. Reference the generated enum anywhere in the target: `Secrets.revenueCatAPIKey`.
