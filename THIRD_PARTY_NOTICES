@@ -1,0 +1,15 @@
+Third-Party Software Notices
+============================
+
+Tightlip's runtime and generated output contain no third-party source code.
+
+Build-time tooling (used to lint and test the project, but not shipped to
+consumers) is provided by the following packages, each under its own license:
+
+  - Persnicket (https://github.com/HeirloomLogic/Persnicket)
+    Bundles swift-format and exposes it as a SwiftPM build-tool plugin.
+
+  - swift-docc-plugin (https://github.com/apple/swift-docc-plugin)
+    Builds DocC documentation from the package sources.
+
+See each package's repository for its license terms.

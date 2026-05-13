@@ -1,0 +1,20 @@
+name: Lint
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  swift-format-lint:
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup swift-format lint
+        run: |
+          swift package resolve
+          .build/checkouts/Persnicket/bin/ci-lint-setup
+
+      - name: Lint (strict)
+        run: xcrun swift-format lint --strict --parallel --recursive --configuration .swift-format Sources Tests

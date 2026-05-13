@@ -1,0 +1,38 @@
+name: Documentation
+
+on:
+  push:
+    tags:
+      - "[0-9]+.[0-9]+.[0-9]+*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  documentation:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Clean docs directory
+        run: rm -rf ./docs
+
+      - name: Build Documentation
+        run: |
+          swift package --allow-writing-to-directory ./docs \
+            generate-documentation --target TightlipCore \
+            --disable-indexing \
+            --transform-for-static-hosting \
+            --hosting-base-path /Tightlip \
+            --output-path ./docs
+
+      - name: Create .nojekyll file
+        run: touch ./docs/.nojekyll
+
+      - name: Deploy to GitHub Pages
+        uses: JamesIves/github-pages-deploy-action@v4
+        with:
+          branch: gh-pages
+          folder: docs
