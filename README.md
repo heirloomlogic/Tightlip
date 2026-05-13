@@ -2,14 +2,14 @@
   <img src=".github/Tightlip-logo@2x.png" alt="Tightlip" width="256">
 </p>
 
+# Tightlip
+
+A SwiftPM build-tool plugin that generates a typed Swift `Secrets` enum from environment variables at build time. The generated file lives in the plugin's work directory and is compiled into the consuming target. Secrets never enter source control.
+
 [![Swift 6.1](https://img.shields.io/badge/Swift-6.1-orange.svg)](https://swift.org)
 [![Platform](https://img.shields.io/badge/Platform-macOS%20|%20iOS%20|%20tvOS%20|%20watchOS-blue.svg)](https://swift.org)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![Documentation](https://img.shields.io/badge/Documentation-DocC-blue.svg)](https://heirloomlogic.github.io/Tightlip/documentation/tightlipcore/)
-
-# Tightlip
-
-A SwiftPM build-tool plugin that generates a typed Swift `Secrets` enum from environment variables at build time. The generated file lives in the plugin's work directory and is compiled into the consuming target. Secrets never enter source control.
 
 ## Installation
 
@@ -17,7 +17,7 @@ A SwiftPM build-tool plugin that generates a typed Swift `Secrets` enum from env
 
 ```swift
 // Package.swift
-.package(url: "https://github.com/heirloomlogic/Tightlip.git", from: "1.0.0"),
+.package(url: "https://github.com/heirloomlogic/Tightlip", from: "1.0.0"),
 ```
 
 Attach the plugin to a target:
@@ -33,7 +33,7 @@ Drop `Secrets.yml` at the target's source root (e.g. `Sources/MyApp/Secrets.yml`
 
 ### Xcode project
 
-1. `File > Add Package Dependencies...` → paste `https://github.com/heirloomlogic/Tightlip.git` → set Dependency Rule to **Up to Next Major** from `1.0.0`. (`Add Local...` also works for vendored checkouts.)
+1. `File > Add Package Dependencies...` → paste `https://github.com/heirloomlogic/Tightlip` → set Dependency Rule to **Up to Next Major** from `1.0.0`. (`Add Local...` also works for vendored checkouts.)
 2. In the target's `Build Phases > Run Build Tool Plug-ins`, add **Lipservice**.
 3. Create `<TargetName>/Secrets.yml` at the project root (the directory containing `.xcodeproj`). `<TargetName>` is the target's *display name*; the plugin resolves this path on the filesystem, not through Xcode's group tree, so the file's position in the Project Navigator is irrelevant. For a stock app template this is the `<TargetName>/` folder already at the top of the project.
 4. Reference the generated enum anywhere in the target: `Secrets.revenueCatAPIKey`.
