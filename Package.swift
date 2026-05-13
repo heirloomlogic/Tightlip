@@ -3,39 +3,39 @@
 import PackageDescription
 
 let package = Package(
-    name: "HeirloomSecrets",
+    name: "Tightlip",
     platforms: [.macOS(.v10_15)],
     products: [
-        .plugin(name: "InjectHeirloomSecrets", targets: ["InjectHeirloomSecrets"]),
+        .plugin(name: "Lipservice", targets: ["Lipservice"]),
     ],
     dependencies: [
         .package(url: "https://github.com/HeirloomLogic/Persnicket", from: "2.0.0"),
     ],
     targets: [
         .target(
-            name: "HeirloomSecretsCore",
+            name: "TightlipCore",
             plugins: [
                 .plugin(name: "Persnoop", package: "Persnicket")
             ]
         ),
         .testTarget(
-            name: "HeirloomSecretsCoreTests",
-            dependencies: ["HeirloomSecretsCore"],
+            name: "TightlipCoreTests",
+            dependencies: ["TightlipCore"],
             plugins: [
                 .plugin(name: "Persnoop", package: "Persnicket")
             ]
         ),
         .executableTarget(
-            name: "InjectHeirloomSecretsTool",
-            dependencies: ["HeirloomSecretsCore"],
+            name: "LipserviceTool",
+            dependencies: ["TightlipCore"],
             plugins: [
                 .plugin(name: "Persnoop", package: "Persnicket")
             ]
         ),
         .plugin(
-            name: "InjectHeirloomSecrets",
+            name: "Lipservice",
             capability: .buildTool(),
-            dependencies: ["InjectHeirloomSecretsTool"],
+            dependencies: ["LipserviceTool"],
         ),
     ]
 )

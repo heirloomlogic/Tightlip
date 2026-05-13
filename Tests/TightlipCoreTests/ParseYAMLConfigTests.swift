@@ -1,13 +1,13 @@
-import HeirloomSecretsCore
 import Testing
+import TightlipCore
 
 @Suite("parseYAMLConfig — flat format")
 struct ParseYAMLConfigFlatTests {
     // MARK: Happy path
 
     @Test func parsesSingleMapping() throws {
-        let result = try parseFlatYAMLConfig("revenueCatAPIKey: FALLOW_RC", path: "t.yml")
-        #expect(result == [ParsedSecret(name: "revenueCatAPIKey", envVar: "FALLOW_RC")])
+        let result = try parseFlatYAMLConfig("revenueCatAPIKey: APP_RC", path: "t.yml")
+        #expect(result == [ParsedSecret(name: "revenueCatAPIKey", envVar: "APP_RC")])
     }
 
     @Test func parsesMultipleMappingsInSourceOrder() throws {
@@ -59,8 +59,8 @@ struct ParseYAMLConfigFlatTests {
     }
 
     @Test func allowsDigitsAfterFirstCharInIdentifiers() throws {
-        let result = try parseFlatYAMLConfig("apiKeyV2: FALLOW_V2_KEY", path: "t.yml")
-        #expect(result == [ParsedSecret(name: "apiKeyV2", envVar: "FALLOW_V2_KEY")])
+        let result = try parseFlatYAMLConfig("apiKeyV2: APP_V2_KEY", path: "t.yml")
+        #expect(result == [ParsedSecret(name: "apiKeyV2", envVar: "APP_V2_KEY")])
     }
 
     @Test func allowsUnderscoreStartingIdentifiers() throws {
@@ -145,10 +145,10 @@ struct ParseYAMLConfigFlatTests {
 
     @Test func parsePathAppearsInFormattedMessage() {
         do {
-            _ = try parseYAMLConfig("", path: "HeirloomSecrets.yml")
+            _ = try parseYAMLConfig("", path: "Secrets.yml")
             Issue.record("expected throw")
         } catch {
-            #expect(error.message.hasPrefix("HeirloomSecrets.yml"))
+            #expect(error.message.hasPrefix("Secrets.yml"))
         }
     }
 
