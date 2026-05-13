@@ -9,7 +9,7 @@
 
 # Tightlip
 
-A SwiftPM build-tool plugin that generates a typed Swift `Secrets` enum from environment variables at build time. The generated file lives in the plugin's work directory and is compiled into the consuming target — secrets never enter source control.
+A SwiftPM build-tool plugin that generates a typed Swift `Secrets` enum from environment variables at build time. The generated file lives in the plugin's work directory and is compiled into the consuming target. Secrets never enter source control.
 
 ## Installation
 
@@ -119,7 +119,7 @@ nonisolated enum Secrets {
 }
 ```
 
-Call sites see plain `String` (`Secrets.appAPIKey`). The stored bytes are XOR-encoded against a 32-byte salt derived deterministically from the resolved values, so identical inputs produce byte-identical output — no spurious downstream recompiles. Plaintext literals never appear in the compiled binary; `strings` against the shipped `.app` won't surface them.
+Call sites see plain `String` (`Secrets.appAPIKey`). The stored bytes are XOR-encoded against a 32-byte salt derived deterministically from the resolved values, so identical inputs produce byte-identical output, which avoids spurious downstream recompiles. Plaintext literals never appear in the compiled binary; `strings` against the shipped `.app` won't surface them.
 
 Properties are emitted in alphabetical order. The enum is always named `Secrets`. The `// Environment:` comment appears only for sectioned configs.
 
@@ -127,7 +127,7 @@ Properties are emitted in alphabetical order. The enum is always named `Secrets`
 
 By default the build tool sources `~/.zshenv` in a clean zsh subshell, captures the resulting environment, and merges it with `ProcessInfo.processInfo.environment` (the build's own env). Per-key conflicts resolve in favor of `ProcessInfo`, so CI runners and Xcode Scheme env vars override anything in `.zshenv`.
 
-This behaves identically regardless of how the build was launched — Xcode.app from Finder, Conductor, VS Code, `xcodebuild` from Terminal. The "my env var works in the shell but Xcode can't see it" class of problem goes away.
+This behaves identically regardless of how the build was launched — Xcode.app from Finder, Conductor, VS Code, `xcodebuild` from Terminal. This eliminates the common case where an env var works in the shell but Xcode can't see it.
 
 If the configured file doesn't exist (typical on CI), the tool falls back to `ProcessInfo` only. Sourcing failures and timeouts (5s default) also fall back, with a single note to stderr.
 
