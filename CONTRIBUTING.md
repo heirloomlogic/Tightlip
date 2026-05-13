@@ -1,6 +1,6 @@
 # Contributing to Tightlip
 
-Tightlip is the SwiftPM build-tool plugin that powers secret management in [Heirloom Logic](https://heirloomlogic.com)'s apps. Contributions that improve the plugin benefit everyone building with it.
+Bug reports, fixes, and documentation improvements are all welcome.
 
 ## Reporting Bugs
 

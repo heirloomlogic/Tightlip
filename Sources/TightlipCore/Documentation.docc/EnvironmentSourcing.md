@@ -4,7 +4,7 @@ Why your env vars resolve the same way whether you build from Xcode, the termina
 
 ## Overview
 
-A common frustration with secret-via-env-var setups: the variable works in your shell, but Xcode can't see it. Or it works locally but not in CI. Or `~/.zshenv` exports something fine, but `xcodebuild` from a launcher doesn't pick it up.
+Env-var secret setups have a recurring failure mode: the variable works in your shell but Xcode can't see it, or it works locally but not in CI, or `~/.zshenv` exports it fine but `xcodebuild` from a launcher doesn't pick it up.
 
 Tightlip addresses this by sourcing your shell init file itself, in a controlled subshell, every build.
 

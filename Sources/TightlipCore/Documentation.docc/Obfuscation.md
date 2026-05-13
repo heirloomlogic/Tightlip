@@ -35,7 +35,7 @@ The full threat model — including in-scope and out-of-scope security issues �
 
 ## Why Determinism Matters
 
-The salt is derived deterministically from the resolved values. Identical inputs produce byte-identical generated files. Without this, every build would write a different file and force a downstream recompile even when no actual secret changed — a constant background tax on incremental builds.
+The salt is derived deterministically from the resolved values. Identical inputs produce byte-identical generated files. Without this, every build would write a different file and force a downstream recompile even when no actual secret changed. That would slow every incremental build.
 
 ## See Also
 
