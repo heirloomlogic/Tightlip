@@ -1,12 +1,12 @@
 import Foundation
-import HeirloomSecretsCore
+import TightlipCore
 
 @main
-struct InjectHeirloomSecretsTool {
+struct LipserviceTool {
     static func main() {
         let args = CommandLine.arguments
         guard args.count == 3 else {
-            fail("usage: InjectHeirloomSecretsTool <config.yml> <output.swift>")
+            fail("usage: LipserviceTool <config.yml> <output.swift>")
         }
         let configPath = args[1]
         let outputPath = args[2]
@@ -17,8 +17,8 @@ struct InjectHeirloomSecretsTool {
         } catch let error as CocoaError where error.code == .fileReadNoSuchFile {
             fail(
                 """
-                HeirloomSecrets config missing at \(configPath). Create a \
-                HeirloomSecrets.yml at the target source root.
+                Tightlip config missing at \(configPath). Create a \
+                Secrets.yml at the target source root.
                 """
             )
         } catch {
@@ -31,7 +31,7 @@ struct InjectHeirloomSecretsTool {
             let configFile = try parseYAMLConfigFile(configText, path: configPath)
 
             let envFileURL = resolveEnvFilePath(
-                configFile.envFile ?? HeirloomSecretsDefaults.envFilePath,
+                configFile.envFile ?? TightlipDefaults.envFilePath,
                 configDir: URL(fileURLWithPath: configPath).deletingLastPathComponent(),
                 homeDirectory: URL(fileURLWithPath: NSHomeDirectory())
             )

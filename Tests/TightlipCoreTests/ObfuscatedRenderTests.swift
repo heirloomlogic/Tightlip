@@ -1,6 +1,6 @@
 import Foundation
-import HeirloomSecretsCore
 import Testing
+import TightlipCore
 
 @Suite("renderSecretsEnum — obfuscation")
 struct ObfuscatedRenderTests {

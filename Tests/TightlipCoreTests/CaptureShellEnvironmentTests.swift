@@ -1,6 +1,6 @@
 import Foundation
-import HeirloomSecretsCore
 import Testing
+import TightlipCore
 
 @Suite("captureShellEnvironment")
 struct CaptureShellEnvironmentTests {
@@ -20,13 +20,13 @@ struct CaptureShellEnvironmentTests {
         let tmp = try tempDir()
         defer { try? FileManager.default.removeItem(at: tmp) }
         let envFile = tmp.appendingPathComponent(".zshenv")
-        try "export HEIRLOOM_TEST_KEY=secretvalue\n".write(to: envFile, atomically: true, encoding: .utf8)
+        try "export TIGHTLIP_TEST_KEY=secretvalue\n".write(to: envFile, atomically: true, encoding: .utf8)
 
         let result = captureShellEnvironment(
             envFile: envFile,
             processEnvironment: ["PATH": "/usr/bin"]
         )
-        #expect(result["HEIRLOOM_TEST_KEY"] == "secretvalue")
+        #expect(result["TIGHTLIP_TEST_KEY"] == "secretvalue")
         #expect(result["PATH"] == "/usr/bin")
     }
 
@@ -34,13 +34,13 @@ struct CaptureShellEnvironmentTests {
         let tmp = try tempDir()
         defer { try? FileManager.default.removeItem(at: tmp) }
         let envFile = tmp.appendingPathComponent(".zshenv")
-        try "export HEIRLOOM_OVERRIDE=from_file\n".write(to: envFile, atomically: true, encoding: .utf8)
+        try "export TIGHTLIP_OVERRIDE=from_file\n".write(to: envFile, atomically: true, encoding: .utf8)
 
         let result = captureShellEnvironment(
             envFile: envFile,
-            processEnvironment: ["HEIRLOOM_OVERRIDE": "from_process"]
+            processEnvironment: ["TIGHTLIP_OVERRIDE": "from_process"]
         )
-        #expect(result["HEIRLOOM_OVERRIDE"] == "from_process")
+        #expect(result["TIGHTLIP_OVERRIDE"] == "from_process")
     }
 
     @Test func envFileWithStdoutPollutionStillParses() throws {
@@ -50,7 +50,7 @@ struct CaptureShellEnvironmentTests {
         let body = """
             echo "this would corrupt naive capture"
             print -l noisy garbage here
-            export HEIRLOOM_AFTER_NOISE=clean
+            export TIGHTLIP_AFTER_NOISE=clean
             """
         try body.write(to: envFile, atomically: true, encoding: .utf8)
 
@@ -58,20 +58,20 @@ struct CaptureShellEnvironmentTests {
             envFile: envFile,
             processEnvironment: [:]
         )
-        #expect(result["HEIRLOOM_AFTER_NOISE"] == "clean")
+        #expect(result["TIGHTLIP_AFTER_NOISE"] == "clean")
     }
 
     @Test func valueWithNewlinesSurvives() throws {
         let tmp = try tempDir()
         defer { try? FileManager.default.removeItem(at: tmp) }
         let envFile = tmp.appendingPathComponent(".zshenv")
-        try "export HEIRLOOM_MULTILINE=$'line1\\nline2'\n".write(to: envFile, atomically: true, encoding: .utf8)
+        try "export TIGHTLIP_MULTILINE=$'line1\\nline2'\n".write(to: envFile, atomically: true, encoding: .utf8)
 
         let result = captureShellEnvironment(
             envFile: envFile,
             processEnvironment: [:]
         )
-        #expect(result["HEIRLOOM_MULTILINE"] == "line1\nline2")
+        #expect(result["TIGHTLIP_MULTILINE"] == "line1\nline2")
     }
 
     @Test func timeoutFallsBackToProcessEnvironment() throws {
@@ -93,7 +93,7 @@ struct CaptureShellEnvironmentTests {
         let tmp = try tempDir()
         defer { try? FileManager.default.removeItem(at: tmp) }
         let envFile = tmp.appendingPathComponent(".zshenv")
-        try "export HEIRLOOM_BEFORE_EXIT=1\nexit 3\n".write(to: envFile, atomically: true, encoding: .utf8)
+        try "export TIGHTLIP_BEFORE_EXIT=1\nexit 3\n".write(to: envFile, atomically: true, encoding: .utf8)
 
         let result = captureShellEnvironment(
             envFile: envFile,
@@ -102,7 +102,7 @@ struct CaptureShellEnvironmentTests {
         // Implementation forwards `exit` to the subshell via `source ... 2>&1`, so the
         // subshell process exit code is the source exit. With non-zero we fall back.
         #expect(result["FALLBACK"] == "yes")
-        #expect(result["HEIRLOOM_BEFORE_EXIT"] == nil)
+        #expect(result["TIGHTLIP_BEFORE_EXIT"] == nil)
     }
 
     @Test func leakedHelperVarIsStripped() throws {
@@ -112,14 +112,14 @@ struct CaptureShellEnvironmentTests {
         try "export FOO=bar\n".write(to: envFile, atomically: true, encoding: .utf8)
 
         let result = captureShellEnvironment(envFile: envFile, processEnvironment: [:])
-        #expect(result["HEIRLOOM_SECRETS_ENV_FILE"] == nil)
+        #expect(result["TIGHTLIP_ENV_FILE"] == nil)
     }
 
     // MARK: helpers
 
     private func tempDir() throws -> URL {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent(
-            "heirloomsecrets-tests-\(UUID().uuidString)"
+            "tightlip-tests-\(UUID().uuidString)"
         )
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir

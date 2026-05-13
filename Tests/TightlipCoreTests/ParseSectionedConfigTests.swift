@@ -1,5 +1,5 @@
-import HeirloomSecretsCore
 import Testing
+import TightlipCore
 
 @Suite("parseYAMLConfig — sectioned format")
 struct ParseSectionedConfigTests {

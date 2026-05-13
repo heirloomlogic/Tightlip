@@ -1,5 +1,5 @@
-import HeirloomSecretsCore
 import Testing
+import TightlipCore
 
 @Suite("resolveEnvironment")
 struct ResolveEnvironmentTests {
@@ -19,29 +19,29 @@ struct ResolveEnvironmentTests {
         (name: "production", secrets: [ParsedSecret(name: "key", envVar: "P_KEY")]),
     ]
 
-    // MARK: HEIRLOOM_ENV takes priority
+    // MARK: TIGHTLIP_ENV takes priority
 
-    @Test func heirloomEnvOverridesEverything() throws {
-        let env = ["HEIRLOOM_ENV": "staging", "CONFIGURATION": "Release"]
+    @Test func tightlipEnvOverridesEverything() throws {
+        let env = ["TIGHTLIP_ENV": "staging", "CONFIGURATION": "Release"]
         let result = try resolveEnvironment(sections: twoSections, environment: env)
         #expect(result == "staging")
     }
 
-    @Test func heirloomEnvWorksWithThreeSections() throws {
-        let env = ["HEIRLOOM_ENV": "qa"]
+    @Test func tightlipEnvWorksWithThreeSections() throws {
+        let env = ["TIGHTLIP_ENV": "qa"]
         let result = try resolveEnvironment(sections: threeSections, environment: env)
         #expect(result == "qa")
     }
 
-    @Test func heirloomEnvMustMatchSection() {
-        let env = ["HEIRLOOM_ENV": "nonexistent"]
+    @Test func tightlipEnvMustMatchSection() {
+        let env = ["TIGHTLIP_ENV": "nonexistent"]
         #expect(throws: ConfigError.self) {
             _ = try resolveEnvironment(sections: twoSections, environment: env)
         }
     }
 
-    @Test func heirloomEnvErrorShowsAvailableSections() {
-        let env = ["HEIRLOOM_ENV": "bad"]
+    @Test func tightlipEnvErrorShowsAvailableSections() {
+        let env = ["TIGHTLIP_ENV": "bad"]
         do {
             _ = try resolveEnvironment(sections: twoSections, environment: env)
             Issue.record("expected throw")
@@ -51,8 +51,8 @@ struct ResolveEnvironmentTests {
         }
     }
 
-    @Test func emptyHeirloomEnvIsIgnored() throws {
-        let env = ["HEIRLOOM_ENV": "", "CONFIGURATION": "Release"]
+    @Test func emptyTightlipEnvIsIgnored() throws {
+        let env = ["TIGHTLIP_ENV": "", "CONFIGURATION": "Release"]
         let result = try resolveEnvironment(sections: twoSections, environment: env)
         #expect(result == "production")
     }
@@ -98,7 +98,7 @@ struct ResolveEnvironmentTests {
 
     // MARK: Indeterminate cases
 
-    @Test func threeSectionsWithoutHeirloomEnvFails() {
+    @Test func threeSectionsWithoutTightlipEnvFails() {
         #expect(throws: ConfigError.self) {
             _ = try resolveEnvironment(sections: threeSections, environment: [:])
         }
@@ -114,12 +114,12 @@ struct ResolveEnvironmentTests {
         }
     }
 
-    @Test func indeterminateErrorSuggestsHeirloomEnv() {
+    @Test func indeterminateErrorSuggestsTightlipEnv() {
         do {
             _ = try resolveEnvironment(sections: threeSections, environment: [:])
             Issue.record("expected throw")
         } catch {
-            #expect(error.message.contains("HEIRLOOM_ENV"))
+            #expect(error.message.contains("TIGHTLIP_ENV"))
         }
     }
 }
