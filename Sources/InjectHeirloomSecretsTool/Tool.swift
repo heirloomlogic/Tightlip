@@ -25,14 +25,25 @@ struct InjectHeirloomSecretsTool {
             fail("failed to read \(configPath): \(error)")
         }
 
+        var environment = ProcessInfo.processInfo.environment
+
         do {
-            let environment = ProcessInfo.processInfo.environment
-            let config = try parseYAMLConfig(configText, path: configPath)
+            let configFile = try parseYAMLConfigFile(configText, path: configPath)
+
+            let envFileURL = resolveEnvFilePath(
+                configFile.envFile ?? HeirloomSecretsDefaults.envFilePath,
+                configDir: URL(fileURLWithPath: configPath).deletingLastPathComponent(),
+                homeDirectory: URL(fileURLWithPath: NSHomeDirectory())
+            )
+            environment = captureShellEnvironment(
+                envFile: envFileURL,
+                processEnvironment: environment
+            )
 
             let secrets: [ParsedSecret]
             var envName: String?
 
-            switch config {
+            switch configFile.secrets {
             case .flat(let parsed):
                 secrets = parsed
             case .sectioned(let sections):
