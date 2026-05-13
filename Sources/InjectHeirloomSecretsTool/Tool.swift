@@ -64,6 +64,7 @@ struct InjectHeirloomSecretsTool {
             }
         } catch let error as ConfigError {
             if case .missingEnvironmentVariable(let envVar, _) = error {
+                let environment = ProcessInfo.processInfo.environment
                 let prefix = envVar.split(separator: "_").first.map(String.init) ?? envVar
                 let visible = environment.keys
                     .filter { $0.hasPrefix("\(prefix)_") }
