@@ -38,6 +38,20 @@ Drop `Secrets.yml` at the target's source root (e.g. `Sources/MyApp/Secrets.yml`
 3. Create `<TargetName>/Secrets.yml` at the project root (the directory containing `.xcodeproj`). `<TargetName>` is the target's *display name*; the plugin resolves this path on the filesystem, not through Xcode's group tree, so the file's position in the Project Navigator is irrelevant. For a stock app template this is the `<TargetName>/` folder already at the top of the project.
 4. Reference the generated enum anywhere in the target: `Secrets.revenueCatAPIKey`.
 
+## Agent skill
+
+If you drive this setup with an AI coding assistant, install the `tightlip-ref` skill. It teaches the assistant how to integrate Tightlip, add or rename secrets, configure per-environment keys, and debug Lipservice build failures.
+
+```bash
+# Claude Code
+gh skill install heirloomlogic/skills tightlip-ref --agent claude-code --force --scope user
+
+# Codex
+gh skill install heirloomlogic/skills tightlip-ref --agent codex --force --scope user
+```
+
+`--force` overwrites any existing copy, so re-run the same command to update to the latest version. `--scope user` installs the skill once for every project on the machine.
+
 ## Usage
 
 Tightlip reads a single config file, `Secrets.yml`, in one of two formats. The format is auto-detected from the first non-comment line.

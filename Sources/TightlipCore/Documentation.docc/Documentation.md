@@ -19,6 +19,10 @@ Tightlip reads a `Secrets.yml` config at the consuming target's source root, res
 
 - <doc:GettingStarted>
 
+### Tooling
+
+- <doc:AgentSkill>
+
 ### How-To Guides
 
 - <doc:SectionedConfigs>
