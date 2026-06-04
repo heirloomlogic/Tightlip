@@ -25,7 +25,7 @@ let devPlugins: [Target.PluginUsage] = isDevBuild
 
 let package = Package(
     name: "Tightlip",
-    platforms: [.macOS(.v10_15)],
+    platforms: [.macOS(.v10_15), .iOS(.v13), .tvOS(.v13), .watchOS(.v6)],
     products: [
         .plugin(name: "Lipservice", targets: ["Lipservice"]),
     ],
