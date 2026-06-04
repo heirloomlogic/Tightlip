@@ -17,3 +17,19 @@ jobs:
 
       - name: Test
         run: swift test
+
+  # Build for iOS Simulator to guard against the plugin tool regressing to macOS-only
+  # APIs. Xcode compiles a build-tool plugin's executable (and its source dependencies)
+  # for the consuming app's destination platform, so TightlipCore must compile for iOS
+  # even though it only ever runs on the host.
+  build-ios:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Build for iOS Simulator
+        run: |
+          xcodebuild build \
+            -scheme Tightlip \
+            -destination 'generic/platform=iOS Simulator'

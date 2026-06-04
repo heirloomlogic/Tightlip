@@ -548,7 +548,9 @@ public enum TightlipDefaults {
     public static let envFilePath = "~/.zshenv"
 }
 
+#if os(macOS)
 private let envFileHelperVar = "TIGHTLIP_ENV_FILE"
+#endif
 
 /// Expands a leading `~` to the user's home directory and resolves relative paths
 /// against `configDir`. Paths that begin with `/` pass through unchanged.
@@ -588,6 +590,7 @@ public func captureShellEnvironment(
     processEnvironment: [String: String],
     timeout: TimeInterval = 5
 ) -> [String: String] {
+    #if os(macOS)
     guard FileManager.default.fileExists(atPath: envFile.path) else {
         return processEnvironment
     }
@@ -657,8 +660,15 @@ public func captureShellEnvironment(
         sourced[key] = value
     }
     return sourced
+    #else
+    // The build tool only ever runs on the macOS host; this branch exists solely so the
+    // sources compile when Xcode builds the plugin tool for a non-macOS destination (a
+    // long-standing Xcode behavior). It is never executed.
+    return processEnvironment
+    #endif
 }
 
+#if os(macOS)
 private func fallbackToProcessEnvironment(
     reason: String,
     processEnvironment: [String: String]
@@ -683,3 +693,4 @@ private final class AtomicFlag: @unchecked Sendable {
         return value
     }
 }
+#endif
