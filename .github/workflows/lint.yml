@@ -13,6 +13,7 @@ jobs:
 
       - name: Setup swift-format lint
         run: |
+          touch .dev-tooling
           swift package resolve
           .build/checkouts/Persnicket/bin/ci-lint-setup
 
