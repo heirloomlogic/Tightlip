@@ -27,6 +27,8 @@ production:
 
 The active section is chosen at build time. For the rules — `TIGHTLIP_ENV`, Xcode `CONFIGURATION`, the auto-inference behavior — see <doc:EnvironmentSelection>.
 
+When a value is identical across environments, point the property at the **same** env var in every section. That's valid — the developer exports one variable, and the resolved section still picks it up. Only the values that genuinely differ need per-environment variables.
+
 ## Naming Convention for Env Vars
 
 Devs working on several apps on the same machine see bare names like `REVENUECAT_API_KEY` collide. Prefix every env var with an app-specific tag — `<APP_PREFIX>_<SECRET>` in screaming snake case (e.g. `ACME_REVENUECAT_API_KEY`). Tightlip doesn't enforce this; the convention just keeps configs across projects from stepping on each other.
