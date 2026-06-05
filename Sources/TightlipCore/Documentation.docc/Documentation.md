@@ -27,6 +27,8 @@ Tightlip reads a `Secrets.yml` config at the consuming target's source root, res
 
 - <doc:SectionedConfigs>
 - <doc:EnvFileDirective>
+- <doc:ContinuousIntegration>
+- <doc:Troubleshooting>
 
 ### Reference
 
