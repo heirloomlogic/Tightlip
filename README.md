@@ -167,6 +167,20 @@ CI runners typically have no `.zshenv`; the tool falls back to `ProcessInfo` and
 
 The directive is recognized only as the first non-blank, non-comment line. Anything after a section header or property mapping is parsed as a secret declaration.
 
+### Project-local env file
+
+Relative `envFile:` paths resolve against `Secrets.yml`'s directory, so `envFile: secrets.env` points at a sibling file inside the target:
+
+```yaml
+# Sources/MyApp/Secrets.yml
+envFile: secrets.env
+revenueCatAPIKey: ACME_REVENUECAT_API_KEY
+```
+
+The file is shell-sourced, so use `export KEY=value` syntax, and **gitignore it** — only `Secrets.yml` belongs in source control. Note that a project-local file must be re-created in every git worktree; a machine-global `~/.zshenv` is sourced identically across worktrees, which is usually what you want under Conductor.
+
+Tightlip intentionally has no auto-discovered `.env` feature: the directive above already covers project-local files, and auto-discovery plus a bespoke dotenv parser would add an accidental-commit footgun and a value-parsing code path that shell-sourcing avoids.
+
 ## Troubleshooting
 
 **`error: environment variable X must be set to generate Secrets.Y`** — the env var is unset in both the sourced file and `ProcessInfo`. The accompanying `note:` line lists everything visible with the same prefix (e.g. `*`), which usually points at a typo. Confirm the key exists in your `envFile` (default `~/.zshenv`).
