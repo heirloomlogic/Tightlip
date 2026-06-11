@@ -223,6 +223,9 @@ private func parseFlat(_ lines: [String], path: String) throws(ConfigError) -> [
                 reason: "expected '<name>: <ENV_VAR>', got '\(stripped)'"
             )
         }
+        if let reason = reservedNameReason(name) {
+            throw .parse(path: path, line: lineNumber, reason: reason)
+        }
         if let prior = seen[name] {
             throw .parse(
                 path: path,
@@ -308,6 +311,9 @@ private func parseSectioned(
                     reason: "expected '  <name>: <ENV_VAR>', got '\(rawLine)'"
                 )
             }
+            if let reason = reservedNameReason(name) {
+                throw .parse(path: path, line: lineNumber, reason: reason)
+            }
             if let prior = seen[name] {
                 throw .parse(
                     path: path,
@@ -376,8 +382,12 @@ public func resolveEnvironment(
     }
 
     if sectionNames.count == 2 {
-        let prodName = sectionNames.first { $0 == "prod" || $0 == "production" }
-        if let prodName, let otherName = sectionNames.first(where: { $0 != prodName }) {
+        // Inference needs exactly one prod-named section; with both `prod` and
+        // `production` present there is no "other" section to map Debug onto.
+        let prodNames = sectionNames.filter { $0 == "prod" || $0 == "production" }
+        if prodNames.count == 1, let prodName = prodNames.first,
+            let otherName = sectionNames.first(where: { $0 != prodName })
+        {
             let configuration = environment["CONFIGURATION"] ?? ""
             if configuration.lowercased() == "release" {
                 return prodName
@@ -404,6 +414,38 @@ private func splitMapping(_ s: String) -> (String, String)? {
     let envVar = String(rest)
     guard isIdentifier(envVar) else { return nil }
     return (name, envVar)
+}
+
+/// Swift reserved keywords that are invalid as unescaped member declaration names.
+/// A secret named `class` would render as `static let class: String = ...`, which
+/// fails to compile inside the generated file — reject it at parse time instead.
+private let swiftKeywords: Set<String> = [
+    // Declarations
+    "associatedtype", "class", "deinit", "enum", "extension", "fileprivate", "func",
+    "import", "init", "inout", "internal", "let", "open", "operator", "private",
+    "precedencegroup", "protocol", "public", "rethrows", "static", "struct",
+    "subscript", "typealias", "var",
+    // Statements
+    "break", "case", "catch", "continue", "default", "defer", "do", "else",
+    "fallthrough", "for", "guard", "if", "in", "repeat", "return", "switch",
+    "throw", "where", "while",
+    // Expressions and types
+    "Any", "Self", "as", "false", "is", "nil", "self", "super", "throws", "true", "try",
+]
+
+/// Member names the generated `Secrets` enum already uses for its decode shim.
+private let generatedHelperNames: Set<String> = ["salt", "decode"]
+
+/// Returns a parse-error reason if `name` cannot be emitted as a property on the
+/// generated enum, or nil if the name is usable.
+private func reservedNameReason(_ name: String) -> String? {
+    if swiftKeywords.contains(name) {
+        return "'\(name)' is a Swift keyword and cannot be used as a secret name"
+    }
+    if generatedHelperNames.contains(name) {
+        return "'\(name)' is reserved by the generated Secrets enum and cannot be used as a secret name"
+    }
+    return nil
 }
 
 private func isIdentifier(_ s: String) -> Bool {
@@ -437,6 +479,27 @@ public func resolveSecret(
         )
     }
     return (name: parsed.name, value: value)
+}
+
+/// Builds the typo-hunting note emitted when a declared env var is missing.
+///
+/// Lists every variable in `environment` that shares the missing variable's
+/// leading underscore-delimited prefix (e.g. `ACME_` for `ACME_API_KEY`), so a
+/// near-miss name is visible right next to the error. Pass the same merged
+/// environment used for resolution — the process env alone would miss
+/// variables that came from the sourced env file.
+///
+/// - Parameters:
+///   - envVar: The environment variable that failed to resolve.
+///   - environment: The environment the resolution actually consulted.
+/// - Returns: A single-line diagnostic without a `note:` prefix or newline.
+public func missingEnvVarDiagnostic(envVar: String, environment: [String: String]) -> String {
+    let prefix = envVar.split(separator: "_").first.map(String.init) ?? envVar
+    let visible = environment.keys
+        .filter { $0.hasPrefix("\(prefix)_") }
+        .sorted()
+    return "\(visible.count) env var(s) with prefix '\(prefix)_' visible to the build: "
+        + "[\(visible.joined(separator: ", "))]; total env count = \(environment.count)"
 }
 
 /// Wraps `value` as a Swift string literal, escaping control characters and quotes.
@@ -508,7 +571,9 @@ public func renderSecretsEnum(
 
             private static let salt: [UInt8] = [\(saltLiteral)]
             private static func decode(_ encoded: String) -> String {
-                guard let data = Data(base64Encoded: encoded) else { return "" }
+                guard let data = Data(base64Encoded: encoded) else {
+                    fatalError("Tightlip: corrupt secret payload; clean and rebuild")
+                }
                 var bytes = [UInt8](data)
                 for i in bytes.indices { bytes[i] ^= salt[i % salt.count] }
                 return String(decoding: bytes, as: UTF8.self)
@@ -610,35 +675,56 @@ public func captureShellEnvironment(
     process.standardOutput = outputPipe
     process.standardError = FileHandle.nullDevice
 
+    // Drain the pipe asynchronously so no code path ever blocks on a read: the
+    // kernel blocks `env -0` once output exceeds the pipe buffer, and a stuck
+    // subshell would block a synchronous reader right back.
+    let buffer = PipeBuffer()
+    let sawEOF = DispatchSemaphore(value: 0)
+    let readHandle = outputPipe.fileHandleForReading
+    readHandle.readabilityHandler = { handle in
+        let data = handle.availableData
+        if data.isEmpty {
+            handle.readabilityHandler = nil
+            sawEOF.signal()
+        } else {
+            buffer.append(data)
+        }
+    }
+
+    let exited = DispatchSemaphore(value: 0)
+    process.terminationHandler = { _ in exited.signal() }
+
     do {
         try process.run()
     } catch {
+        readHandle.readabilityHandler = nil
         return fallbackToProcessEnvironment(
             reason: "could not spawn /bin/zsh to source \(envFile.path): \(error)",
             processEnvironment: processEnvironment
         )
     }
 
-    let killerFired = AtomicFlag()
-    let killer = DispatchWorkItem { [weak process] in
-        killerFired.set()
-        guard let process, process.isRunning else { return }
+    guard exited.wait(timeout: .now() + timeout) == .success else {
+        // SIGTERM first so zsh can clean up its children; escalate to SIGKILL
+        // for subshells whose env file traps TERM.
         process.terminate()
-    }
-    DispatchQueue.global().asyncAfter(deadline: .now() + timeout, execute: killer)
-
-    // Read first, then waitUntilExit. Reversing this order deadlocks if zsh emits more
-    // than the pipe buffer holds, because the kernel blocks the writer until we drain.
-    let outputData = outputPipe.fileHandleForReading.readDataToEndOfFile()
-    process.waitUntilExit()
-    killer.cancel()
-
-    if killerFired.isSet {
+        if exited.wait(timeout: .now() + 0.5) != .success {
+            kill(process.processIdentifier, SIGKILL)
+        }
+        readHandle.readabilityHandler = nil
         return fallbackToProcessEnvironment(
             reason: "sourcing \(envFile.path) timed out after \(timeout)s",
             processEnvironment: processEnvironment
         )
     }
+
+    // The subshell has exited, so `env -0` finished writing. Wait briefly for
+    // EOF to confirm the drain is complete; if some leftover child of the env
+    // file holds the write end open, the buffered bytes are already all there
+    // is to read.
+    _ = sawEOF.wait(timeout: .now() + 0.25)
+    readHandle.readabilityHandler = nil
+
     if process.terminationStatus != 0 {
         return fallbackToProcessEnvironment(
             reason: "sourcing \(envFile.path) exited \(process.terminationStatus)",
@@ -646,6 +732,7 @@ public func captureShellEnvironment(
         )
     }
 
+    let outputData = buffer.data
     var sourced: [String: String] = [:]
     for part in outputData.split(separator: 0x00, omittingEmptySubsequences: true) {
         let entry = String(decoding: part, as: UTF8.self)
@@ -677,20 +764,20 @@ private func fallbackToProcessEnvironment(
     return processEnvironment
 }
 
-private final class AtomicFlag: @unchecked Sendable {
+private final class PipeBuffer: @unchecked Sendable {
     private let lock = NSLock()
-    private var value = false
+    private var storage = Data()
 
-    func set() {
+    func append(_ data: Data) {
         lock.lock()
-        value = true
+        storage.append(data)
         lock.unlock()
     }
 
-    var isSet: Bool {
+    var data: Data {
         lock.lock()
         defer { lock.unlock() }
-        return value
+        return storage
     }
 }
 #endif

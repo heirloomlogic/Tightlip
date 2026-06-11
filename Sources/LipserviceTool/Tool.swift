@@ -64,15 +64,10 @@ struct LipserviceTool {
             }
         } catch let error as ConfigError {
             if case .missingEnvironmentVariable(let envVar, _) = error {
-                let environment = ProcessInfo.processInfo.environment
-                let prefix = envVar.split(separator: "_").first.map(String.init) ?? envVar
-                let visible = environment.keys
-                    .filter { $0.hasPrefix("\(prefix)_") }
-                    .sorted()
-                let line =
-                    "note: \(visible.count) env var(s) with prefix '\(prefix)_' visible to the build: "
-                    + "[\(visible.joined(separator: ", "))]; total env count = \(environment.count)\n"
-                FileHandle.standardError.write(Data(line.utf8))
+                // `environment` is the merged (env-file-sourced + process) dict the
+                // resolution actually used; diagnosing against anything else lies.
+                let line = missingEnvVarDiagnostic(envVar: envVar, environment: environment)
+                FileHandle.standardError.write(Data("note: \(line)\n".utf8))
             }
             fail(error.message)
         } catch {

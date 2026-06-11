@@ -70,4 +70,12 @@ struct RenderSecretsEnumTests {
         #expect(out.contains("Data(base64Encoded: encoded)"))
         #expect(out.contains("bytes[i] ^= salt[i % salt.count]"))
     }
+
+    @Test func decodeTrapsInsteadOfReturningEmptyString() {
+        // A base64 failure can only mean a corrupted generated file. Returning
+        // "" would hand the app a silently-empty API key at runtime.
+        let out = renderSecretsEnum([(name: "k", value: "v")])
+        #expect(out.contains("fatalError("))
+        #expect(!out.contains("return \"\""))
+    }
 }

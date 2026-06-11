@@ -139,6 +139,23 @@ struct ParseYAMLConfigFlatTests {
         expectParseError("café: BAR", line: 1, reasonContains: "expected")
     }
 
+    @Test(arguments: ["class", "default", "func", "static", "import", "true", "Self"])
+    func swiftKeywordAsSecretNameIsParseError(keyword: String) {
+        expectParseError("\(keyword): APP_VALUE", line: 1, reasonContains: "Swift keyword")
+    }
+
+    @Test(arguments: ["salt", "decode"])
+    func generatedHelperNameAsSecretNameIsParseError(name: String) {
+        expectParseError("\(name): APP_VALUE", line: 1, reasonContains: "reserved")
+    }
+
+    @Test func swiftKeywordAsEnvVarNameIsAllowed() throws {
+        // Only the property name is emitted as a Swift identifier; the env var
+        // side never appears in generated code.
+        let result = try parseFlatYAMLConfig("apiKey: class", path: "t.yml")
+        #expect(result == [ParsedSecret(name: "apiKey", envVar: "class")])
+    }
+
     @Test func errorLineNumberPointsAtOffendingLine() {
         expectParseError("foo: BAR\n\tbad: VAL", line: 2, reasonContains: "indentation")
     }

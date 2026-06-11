@@ -158,6 +158,28 @@ struct ParseSectionedConfigTests {
         expectParseError(text, line: 2, reasonContains: "section header")
     }
 
+    @Test func swiftKeywordAsSecretNameInSectionIsError() {
+        let text = "staging:\n  default: STAGING_DEFAULT"
+        expectParseError(text, line: 2, reasonContains: "Swift keyword")
+    }
+
+    @Test func generatedHelperNameAsSecretNameInSectionIsError() {
+        let text = "staging:\n  decode: STAGING_DECODE"
+        expectParseError(text, line: 2, reasonContains: "reserved")
+    }
+
+    @Test func swiftKeywordAsSectionNameIsAllowed() throws {
+        // Section names never appear as Swift identifiers in generated code —
+        // only in the environment-name comment — so keywords are fine here.
+        let text = "default:\n  key: D_KEY\nprod:\n  key: P_KEY"
+        let config = try parseYAMLConfig(text, path: "t.yml")
+        guard case .sectioned(let sections) = config else {
+            Issue.record("expected .sectioned")
+            return
+        }
+        #expect(sections.map(\.name) == ["default", "prod"])
+    }
+
     // MARK: Helper
 
     private func expectParseError(

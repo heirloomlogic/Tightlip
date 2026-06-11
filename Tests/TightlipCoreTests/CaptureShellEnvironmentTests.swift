@@ -105,6 +105,71 @@ struct CaptureShellEnvironmentTests {
         #expect(result["TIGHTLIP_BEFORE_EXIT"] == nil)
     }
 
+    @Test func disownedBackgroundChildDoesNotHangOrDiscardResult() throws {
+        // A daemon-style process spawned by the env file (ssh-agent, version
+        // managers) inherits the stdout pipe and can hold it open long after
+        // zsh exits. Sourcing succeeded, so the exports must still come
+        // through — promptly, without waiting for the grandchild.
+        let tmp = try tempDir()
+        defer { try? FileManager.default.removeItem(at: tmp) }
+        let envFile = tmp.appendingPathComponent(".zshenv")
+        try "export TIGHTLIP_DAEMON_TEST=ok\nsleep 8 &!\n".write(
+            to: envFile, atomically: true, encoding: .utf8)
+
+        let start = ContinuousClock.now
+        let result = captureShellEnvironment(
+            envFile: envFile,
+            processEnvironment: [:],
+            timeout: 2
+        )
+        let elapsed = ContinuousClock.now - start
+
+        #expect(result["TIGHTLIP_DAEMON_TEST"] == "ok")
+        #expect(elapsed < .seconds(5), "took \(elapsed); blocked on the grandchild's pipe")
+    }
+
+    @Test func timeoutReturnsPromptly() throws {
+        // The fallback must happen at ~timeout even though the sourced file
+        // keeps running long past it.
+        let tmp = try tempDir()
+        defer { try? FileManager.default.removeItem(at: tmp) }
+        let envFile = tmp.appendingPathComponent(".zshenv")
+        try "sleep 8\nexport NEVER_VISIBLE=1\n".write(to: envFile, atomically: true, encoding: .utf8)
+
+        let start = ContinuousClock.now
+        let result = captureShellEnvironment(
+            envFile: envFile,
+            processEnvironment: ["FALLBACK": "yes"],
+            timeout: 0.3
+        )
+        let elapsed = ContinuousClock.now - start
+
+        #expect(result == ["FALLBACK": "yes"])
+        #expect(elapsed < .seconds(5), "took \(elapsed); timeout did not take effect")
+    }
+
+    @Test func sigtermIgnoringEnvFileStillTimesOutPromptly() throws {
+        // `trap '' TERM` set while sourcing persists in the subshell, so the
+        // timeout's SIGTERM is ignored. The capture must still return at
+        // ~timeout instead of blocking until the subshell finishes.
+        let tmp = try tempDir()
+        defer { try? FileManager.default.removeItem(at: tmp) }
+        let envFile = tmp.appendingPathComponent(".zshenv")
+        try "trap '' TERM\nsleep 8\nexport NEVER_VISIBLE=1\n".write(
+            to: envFile, atomically: true, encoding: .utf8)
+
+        let start = ContinuousClock.now
+        let result = captureShellEnvironment(
+            envFile: envFile,
+            processEnvironment: ["FALLBACK": "yes"],
+            timeout: 0.3
+        )
+        let elapsed = ContinuousClock.now - start
+
+        #expect(result == ["FALLBACK": "yes"])
+        #expect(elapsed < .seconds(5), "took \(elapsed); SIGTERM-immune subshell blocked the build")
+    }
+
     @Test func leakedHelperVarIsStripped() throws {
         let tmp = try tempDir()
         defer { try? FileManager.default.removeItem(at: tmp) }

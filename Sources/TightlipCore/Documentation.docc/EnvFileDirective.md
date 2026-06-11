@@ -15,7 +15,7 @@ envFile: ~/.bash_profile
 revenueCatAPIKey: REVENUECAT_API_KEY
 ```
 
-The path is tilde-expanded against `$HOME`; relative paths resolve against the config's directory.
+The path is tilde-expanded against `$HOME`; relative paths resolve against the config's directory. Only `~/` (your own home) is expanded — the `~user/file` form is not supported and would be treated as a relative path.
 
 ## Per-Shell Recommendations
 
