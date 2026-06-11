@@ -114,6 +114,31 @@ struct ResolveEnvironmentTests {
         }
     }
 
+    @Test func bothProdNamesWithoutTightlipEnvFails() {
+        // With sections `prod` and `production`, inference would treat `prod`
+        // as the production section and `production` as the *other* one —
+        // mapping Debug builds to "production". Refuse to guess.
+        let sections: [(name: String, secrets: [ParsedSecret])] = [
+            (name: "prod", secrets: [ParsedSecret(name: "key", envVar: "P_KEY")]),
+            (name: "production", secrets: [ParsedSecret(name: "key", envVar: "PP_KEY")]),
+        ]
+        #expect(throws: ConfigError.self) {
+            _ = try resolveEnvironment(sections: sections, environment: ["CONFIGURATION": "Debug"])
+        }
+    }
+
+    @Test func bothProdNamesStillResolveViaTightlipEnv() throws {
+        let sections: [(name: String, secrets: [ParsedSecret])] = [
+            (name: "prod", secrets: [ParsedSecret(name: "key", envVar: "P_KEY")]),
+            (name: "production", secrets: [ParsedSecret(name: "key", envVar: "PP_KEY")]),
+        ]
+        let result = try resolveEnvironment(
+            sections: sections,
+            environment: ["TIGHTLIP_ENV": "production"]
+        )
+        #expect(result == "production")
+    }
+
     @Test func indeterminateErrorSuggestsTightlipEnv() {
         do {
             _ = try resolveEnvironment(sections: threeSections, environment: [:])

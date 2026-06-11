@@ -9,6 +9,7 @@ Tightlip parses a small, strict subset of YAML. The parser rejects anything ambi
 ## Rules
 
 - Property names and env-var names must be bare ASCII identifiers (`[A-Za-z_][A-Za-z0-9_]*`). No quoting.
+- Property names may not be Swift keywords (`class`, `default`, …) or the names the generated enum reserves for its decode shim (`salt`, `decode`). Either would render a non-compiling generated file, so the parser rejects them with a line number instead.
 - `#` at the start of a line is a comment. Inline comments after a value are not supported.
 - Blank lines are fine. Tabs are not — anywhere.
 - Flat mode: no leading whitespace on mapping lines.
@@ -33,6 +34,7 @@ Parse errors print as `<path>:<line>: <reason>`:
 error: Secrets.yml:1: tab character not allowed; use spaces
 error: Secrets.yml:1: expected '<name>: <ENV_VAR>', got 'foo BAR'
 error: Secrets.yml:3: duplicate key 'foo' (first defined on line 1)
+error: Secrets.yml:2: 'class' is a Swift keyword and cannot be used as a secret name
 error: Secrets.yml: no secrets declared
 ```
 

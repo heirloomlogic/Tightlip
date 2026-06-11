@@ -86,6 +86,7 @@ Each top-level identifier followed by `:` (with no value) is an environment sect
 The parser is deliberately strict:
 
 - Property names and env-var names must be bare ASCII identifiers (`[A-Za-z_][A-Za-z0-9_]*`). No quoting.
+- Property names may not be Swift keywords (`class`, `default`, …) or the names the generated enum reserves for itself (`salt`, `decode`) — they'd produce a non-compiling generated file, so the parser rejects them up front.
 - `#` at the start of a line is a comment. Inline comments after a value are not supported.
 - Blank lines are fine. Tabs are not — anywhere.
 - Flat mode: no leading whitespace on mapping lines.
@@ -102,8 +103,8 @@ Devs working on several apps on the same machine see bare names like `REVENUECAT
 
 When a sectioned config is used, the build tool picks one section in this order:
 
-1. **`TIGHTLIP_ENV`** — if set, its value must match a section name exactly. Highest priority.
-2. **Automatic inference** — when exactly two sections exist and one is named `prod` or `production`:
+1. **`TIGHTLIP_ENV`** — if set (to a non-empty value), it must match a section name exactly. Highest priority.
+2. **Automatic inference** — when exactly two sections exist and exactly one is named `prod` or `production`:
    - `CONFIGURATION=Release` (Xcode) → the `prod`/`production` section.
    - Any other configuration (including `Debug` and unset) → the other section.
 3. **Error** — if neither rule resolves (e.g. three sections without `TIGHTLIP_ENV`), the build fails with a message listing available environments.
@@ -115,6 +116,9 @@ Flat configs have no environment concept and ignore all of this.
 - **Local dev:** add `export TIGHTLIP_ENV=staging` to `~/.zshenv`, or leave it unset and let Debug builds pick the non-production section automatically.
 - **CI release lane:** set `TIGHTLIP_ENV=production`, or rely on `CONFIGURATION=Release` if using Xcode.
 - **More than two environments (qa, uat, etc.):** always set `TIGHTLIP_ENV` explicitly.
+
+> [!WARNING]
+> `CONFIGURATION` is set by Xcode and `xcodebuild` only. A plain `swift build -c release` does **not** set it, so inference resolves to the *non*-production section — a release binary with staging keys. If you build releases with SwiftPM directly, always set `TIGHTLIP_ENV=production` on that lane. The build log's `note: using environment '…'` line tells you what was picked.
 
 ## Generated output
 
@@ -144,6 +148,8 @@ By default the build tool sources `~/.zshenv` in a clean zsh subshell, captures 
 This behaves identically regardless of how the build was launched — Xcode.app from Finder, Conductor, VS Code, `xcodebuild` from Terminal. This eliminates the common case where an env var works in the shell but Xcode can't see it.
 
 If the configured file doesn't exist (typical on CI), the tool falls back to `ProcessInfo` only. Sourcing failures and timeouts (5s default) also fall back, with a single note to stderr.
+
+One caveat: `zsh -f` skips all startup files *except* the system-wide `/etc/zshenv`. On machines where IT tooling lives there (some managed Macs), that file runs during capture too — if sourcing is slow or noisy, check there as well as your own env file.
 
 ### Overriding the sourced file
 
@@ -183,7 +189,7 @@ Tightlip intentionally has no auto-discovered `.env` feature: the directive abov
 
 ## Troubleshooting
 
-**`error: environment variable X must be set to generate Secrets.Y`** — the env var is unset in both the sourced file and `ProcessInfo`. The accompanying `note:` line lists everything visible with the same prefix (e.g. `*`), which usually points at a typo. Confirm the key exists in your `envFile` (default `~/.zshenv`).
+**`error: environment variable X must be set to generate Secrets.Y`** — the env var is unset in both the sourced file and `ProcessInfo`. The accompanying `note:` line lists everything visible with the same prefix (e.g. `ACME_*`), which usually points at a typo. Confirm the key exists in your `envFile` (default `~/.zshenv`).
 
 **`note: sourcing /path/to/file ... using process environment only`** — the subshell that sources your `envFile` failed or timed out. Reproduce with `zsh -f -c 'source <yourEnvFile>'`. Typical causes: a tool inside `.zshenv` (e.g. `mise`, `asdf`) hitting something the sandbox blocks, or `.zshenv` taking longer than 5 seconds.
 
@@ -191,6 +197,6 @@ Tightlip intentionally has no auto-discovered `.env` feature: the directive abov
 
 **`error: Secrets.yml:N: ...`** — the config didn't parse. Check the line against the [Grammar](#grammar) rules. Common causes: tab characters (paste from a different editor), quoted values, nested indentation, inline comments after a value.
 
-**Plugin doesn't regenerate after changing an env var** — confirm you're looking at the right target. The plugin regenerates whenever the config file or env var values change between builds. If it seems stuck, run `xcodebuild clean` to force a fresh generation.
+**Plugin doesn't regenerate after changing an env var** — expected: the build system tracks `Secrets.yml` as the command's only input, so changing an env var alone doesn't mark the generation step stale. Run `xcodebuild clean` (or Product → Clean Build Folder) and rebuild to pick up the new value.
 
 **Generated enum isn't visible in code** — confirm the plugin is attached to the target (Build Phases > Run Build Tool Plug-ins in Xcode) and that `Secrets.yml` is at the expected path.
