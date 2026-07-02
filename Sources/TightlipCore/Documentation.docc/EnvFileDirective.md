@@ -17,6 +17,10 @@ revenueCatAPIKey: REVENUECAT_API_KEY
 
 The path is tilde-expanded against `$HOME`; relative paths resolve against the config's directory. Only `~/` (your own home) is expanded — the `~user/file` form is not supported and would be treated as a relative path.
 
+The path may not contain spaces or `#` (inline comments are not supported), and a bare identifier like `envFile: SOME_VAR` is rejected as ambiguous with a secret mapping — write `./SOME_VAR` for a genuinely relative path. If the declared file doesn't exist at build time, the build proceeds on the process environment alone and a `note:` in the log points at the resolved path.
+
+The declared file (like `Secrets.yml` itself) is tracked as a build input, so editing it re-triggers generation on the next build — no clean needed.
+
 ## Per-Shell Recommendations
 
 | Shell | Recommended path | Notes |

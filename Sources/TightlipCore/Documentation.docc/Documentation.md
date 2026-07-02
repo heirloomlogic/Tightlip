@@ -43,5 +43,6 @@ Tightlip reads a `Secrets.yml` config at the consuming target's source root, res
 ### Parsing
 
 - ``ParsedSecret``
+- ``ParsedSection``
 - ``ParsedConfig``
 - ``ParsedConfigFile``

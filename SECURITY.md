@@ -20,6 +20,11 @@ Tightlip is a build-time code generator. It reads a developer-authored config fi
 
 The XOR-encoded literal output is a **defense against `strings`-style trivial extraction** from the shipped binary, not encryption. A determined attacker with the binary and a debugger can recover any secret embedded in any app — Tightlip is not, and cannot be, a substitute for a secret-management service for high-value credentials. Treat the generated `Secrets` enum the same way you would treat any compile-time constant in your binary.
 
+Two properties of the design deserve explicit attention when reviewing changes to a project that uses Tightlip:
+
+- **`Secrets.yml` chooses which environment variables get embedded in the build product.** A pull request that edits `Secrets.yml` to map a property onto a CI credential (say, `key: AWS_SECRET_ACCESS_KEY`) exfiltrates that credential through the built artifact itself — no code execution or network access required. Review `Secrets.yml` diffs with the same care as code, and build untrusted pull requests with a minimal environment.
+- **The `envFile:` directive names a file that is executed (shell-sourced) at build time.** Inside SwiftPM's plugin sandbox this is no more power than any build-tool plugin already has, but builds run with `--disable-sandbox` (a common workaround on some CI images) turn a repository-controlled `envFile: ./x.sh` into unsandboxed shell execution. Don't disable the sandbox when building repositories you don't trust.
+
 Plausible in-scope security issues:
 
 - Path traversal or arbitrary file read via `envFile:` directive

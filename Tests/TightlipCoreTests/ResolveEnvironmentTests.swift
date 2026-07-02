@@ -3,20 +3,20 @@ import TightlipCore
 
 @Suite("resolveEnvironment")
 struct ResolveEnvironmentTests {
-    private let twoSections: [(name: String, secrets: [ParsedSecret])] = [
-        (name: "staging", secrets: [ParsedSecret(name: "key", envVar: "S_KEY")]),
-        (name: "production", secrets: [ParsedSecret(name: "key", envVar: "P_KEY")]),
+    private let twoSections: [ParsedSection] = [
+        ParsedSection(name: "staging", secrets: [ParsedSecret(name: "key", envVar: "S_KEY")]),
+        ParsedSection(name: "production", secrets: [ParsedSecret(name: "key", envVar: "P_KEY")]),
     ]
 
-    private let twoSectionsProd: [(name: String, secrets: [ParsedSecret])] = [
-        (name: "qa", secrets: [ParsedSecret(name: "key", envVar: "Q_KEY")]),
-        (name: "prod", secrets: [ParsedSecret(name: "key", envVar: "P_KEY")]),
+    private let twoSectionsProd: [ParsedSection] = [
+        ParsedSection(name: "qa", secrets: [ParsedSecret(name: "key", envVar: "Q_KEY")]),
+        ParsedSection(name: "prod", secrets: [ParsedSecret(name: "key", envVar: "P_KEY")]),
     ]
 
-    private let threeSections: [(name: String, secrets: [ParsedSecret])] = [
-        (name: "staging", secrets: [ParsedSecret(name: "key", envVar: "S_KEY")]),
-        (name: "qa", secrets: [ParsedSecret(name: "key", envVar: "Q_KEY")]),
-        (name: "production", secrets: [ParsedSecret(name: "key", envVar: "P_KEY")]),
+    private let threeSections: [ParsedSection] = [
+        ParsedSection(name: "staging", secrets: [ParsedSecret(name: "key", envVar: "S_KEY")]),
+        ParsedSection(name: "qa", secrets: [ParsedSecret(name: "key", envVar: "Q_KEY")]),
+        ParsedSection(name: "production", secrets: [ParsedSecret(name: "key", envVar: "P_KEY")]),
     ]
 
     // MARK: TIGHTLIP_ENV takes priority
@@ -96,6 +96,37 @@ struct ResolveEnvironmentTests {
         #expect(result == "production")
     }
 
+    // MARK: Custom configuration names refuse to guess
+
+    @Test(arguments: ["AppStore", "Beta", "AppStore-Release", "Staging"])
+    func unknownConfigurationNameRefusesToInfer(configuration: String) {
+        // Guessing non-production for a custom Release-like configuration would
+        // ship staging keys in a release archive — the worst silent outcome.
+        let env = ["CONFIGURATION": configuration]
+        #expect(throws: ConfigError.self) {
+            _ = try resolveEnvironment(sections: twoSections, environment: env)
+        }
+    }
+
+    @Test func unknownConfigurationErrorNamesTheConfiguration() {
+        do {
+            _ = try resolveEnvironment(
+                sections: twoSections,
+                environment: ["CONFIGURATION": "AppStore"]
+            )
+            Issue.record("expected throw")
+        } catch {
+            #expect(error.message.contains("AppStore"))
+            #expect(error.message.contains("TIGHTLIP_ENV"))
+        }
+    }
+
+    @Test func tightlipEnvOverridesUnknownConfiguration() throws {
+        let env = ["TIGHTLIP_ENV": "production", "CONFIGURATION": "AppStore"]
+        let result = try resolveEnvironment(sections: twoSections, environment: env)
+        #expect(result == "production")
+    }
+
     // MARK: Indeterminate cases
 
     @Test func threeSectionsWithoutTightlipEnvFails() {
@@ -105,9 +136,9 @@ struct ResolveEnvironmentTests {
     }
 
     @Test func twoSectionsWithoutProdNameFails() {
-        let sections: [(name: String, secrets: [ParsedSecret])] = [
-            (name: "staging", secrets: [ParsedSecret(name: "key", envVar: "S_KEY")]),
-            (name: "qa", secrets: [ParsedSecret(name: "key", envVar: "Q_KEY")]),
+        let sections: [ParsedSection] = [
+            ParsedSection(name: "staging", secrets: [ParsedSecret(name: "key", envVar: "S_KEY")]),
+            ParsedSection(name: "qa", secrets: [ParsedSecret(name: "key", envVar: "Q_KEY")]),
         ]
         #expect(throws: ConfigError.self) {
             _ = try resolveEnvironment(sections: sections, environment: [:])
@@ -118,9 +149,9 @@ struct ResolveEnvironmentTests {
         // With sections `prod` and `production`, inference would treat `prod`
         // as the production section and `production` as the *other* one —
         // mapping Debug builds to "production". Refuse to guess.
-        let sections: [(name: String, secrets: [ParsedSecret])] = [
-            (name: "prod", secrets: [ParsedSecret(name: "key", envVar: "P_KEY")]),
-            (name: "production", secrets: [ParsedSecret(name: "key", envVar: "PP_KEY")]),
+        let sections: [ParsedSection] = [
+            ParsedSection(name: "prod", secrets: [ParsedSecret(name: "key", envVar: "P_KEY")]),
+            ParsedSection(name: "production", secrets: [ParsedSecret(name: "key", envVar: "PP_KEY")]),
         ]
         #expect(throws: ConfigError.self) {
             _ = try resolveEnvironment(sections: sections, environment: ["CONFIGURATION": "Debug"])
@@ -128,9 +159,9 @@ struct ResolveEnvironmentTests {
     }
 
     @Test func bothProdNamesStillResolveViaTightlipEnv() throws {
-        let sections: [(name: String, secrets: [ParsedSecret])] = [
-            (name: "prod", secrets: [ParsedSecret(name: "key", envVar: "P_KEY")]),
-            (name: "production", secrets: [ParsedSecret(name: "key", envVar: "PP_KEY")]),
+        let sections: [ParsedSection] = [
+            ParsedSection(name: "prod", secrets: [ParsedSecret(name: "key", envVar: "P_KEY")]),
+            ParsedSection(name: "production", secrets: [ParsedSecret(name: "key", envVar: "PP_KEY")]),
         ]
         let result = try resolveEnvironment(
             sections: sections,
