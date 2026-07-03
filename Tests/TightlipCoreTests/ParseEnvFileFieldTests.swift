@@ -105,6 +105,58 @@ struct ParseEnvFileFieldTests {
         }
     }
 
+    @Test func inlineCommentInDirectiveIsParseError() throws {
+        // Without this, "# local" becomes part of the path, fileExists fails, and
+        // sourcing silently falls back to the process environment.
+        do {
+            _ = try parseYAMLConfigFile("envFile: ./secrets.env # local\nfoo: BAR", path: "t.yml")
+            Issue.record("expected parse error")
+        } catch {
+            guard case .parse(_, let line, let reason) = error else {
+                Issue.record("expected .parse, got \(error)")
+                return
+            }
+            #expect(line == 1)
+            #expect(reason.contains("envFile"))
+        }
+    }
+
+    @Test func spaceInDirectivePathIsParseError() throws {
+        do {
+            _ = try parseYAMLConfigFile("envFile: ~/My Files/env\nfoo: BAR", path: "t.yml")
+            Issue.record("expected parse error")
+        } catch {
+            #expect(error.message.contains("envFile"))
+        }
+    }
+
+    @Test func bareIdentifierDirectiveValueIsParseError() throws {
+        // `envFile: SOME_VAR` on the first line is ambiguous with a secret mapping;
+        // refuse it and point at the ./ spelling for genuine relative paths.
+        do {
+            _ = try parseYAMLConfigFile("envFile: SOME_VAR\nfoo: BAR", path: "t.yml")
+            Issue.record("expected parse error")
+        } catch {
+            #expect(error.message.contains("./"))
+        }
+    }
+
+    @Test func envFileAsSecretNameIsParseError() throws {
+        // Only the first meaningful line is directive position; anywhere else,
+        // `envFile` as a property name is reserved to keep the config unambiguous.
+        do {
+            _ = try parseYAMLConfigFile("foo: BAR\nenvFile: BAZ", path: "t.yml")
+            Issue.record("expected parse error")
+        } catch {
+            guard case .parse(_, let line, let reason) = error else {
+                Issue.record("expected .parse, got \(error)")
+                return
+            }
+            #expect(line == 2)
+            #expect(reason.contains("reserved"))
+        }
+    }
+
     @Test func parseYAMLConfigDiscardsDirective() throws {
         let text = """
             envFile: ~/.zshenv

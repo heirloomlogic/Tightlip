@@ -170,6 +170,78 @@ struct CaptureShellEnvironmentTests {
         #expect(elapsed < .seconds(5), "took \(elapsed); SIGTERM-immune subshell blocked the build")
     }
 
+    @Test func syntaxErrorMidFileNotesPartialEnvironment() throws {
+        // `source` aborts at the bad line but the subshell continues to `env -0`
+        // and exits 0 — exports above the error are visible, exports below are
+        // not. That partial capture must be reported, not silent.
+        let tmp = try tempDir()
+        defer { try? FileManager.default.removeItem(at: tmp) }
+        let envFile = tmp.appendingPathComponent(".zshenv")
+        let body = """
+            export TIGHTLIP_BEFORE_ERROR=1
+            if then fi garbage(
+            export TIGHTLIP_AFTER_ERROR=2
+            """
+        try body.write(to: envFile, atomically: true, encoding: .utf8)
+
+        var notes: [String] = []
+        let result = captureShellEnvironment(
+            envFile: envFile,
+            processEnvironment: ["FALLBACK": "yes"],
+            onNote: { notes.append($0) }
+        )
+        #expect(result["TIGHTLIP_BEFORE_ERROR"] == "1")
+        #expect(result["TIGHTLIP_AFTER_ERROR"] == nil)
+        #expect(result["FALLBACK"] == "yes")
+        #expect(notes.contains { $0.contains("partial") }, "notes were: \(notes)")
+    }
+
+    @Test func exitZeroInEnvFileFallsBackWithNote() throws {
+        // `exit 0` while sourcing kills the subshell before `env -0` runs, so
+        // nothing is captured yet the exit status is success. That must be
+        // treated as a capture failure, not an empty-but-valid environment.
+        let tmp = try tempDir()
+        defer { try? FileManager.default.removeItem(at: tmp) }
+        let envFile = tmp.appendingPathComponent(".zshenv")
+        try "export TIGHTLIP_BEFORE_EXIT=1\nexit 0\n".write(
+            to: envFile, atomically: true, encoding: .utf8)
+
+        var notes: [String] = []
+        let result = captureShellEnvironment(
+            envFile: envFile,
+            processEnvironment: ["FALLBACK": "yes"],
+            onNote: { notes.append($0) }
+        )
+        #expect(result == ["FALLBACK": "yes"])
+        #expect(!notes.isEmpty, "capture failure was silent")
+    }
+
+    @Test func cleanSourceEmitsNoNotes() throws {
+        let tmp = try tempDir()
+        defer { try? FileManager.default.removeItem(at: tmp) }
+        let envFile = tmp.appendingPathComponent(".zshenv")
+        try "export TIGHTLIP_CLEAN=ok\n".write(to: envFile, atomically: true, encoding: .utf8)
+
+        var notes: [String] = []
+        let result = captureShellEnvironment(
+            envFile: envFile,
+            processEnvironment: [:],
+            onNote: { notes.append($0) }
+        )
+        #expect(result["TIGHTLIP_CLEAN"] == "ok")
+        #expect(notes.isEmpty, "unexpected notes: \(notes)")
+    }
+
+    @Test func sourceStatusSentinelIsStripped() throws {
+        let tmp = try tempDir()
+        defer { try? FileManager.default.removeItem(at: tmp) }
+        let envFile = tmp.appendingPathComponent(".zshenv")
+        try "export FOO=bar\n".write(to: envFile, atomically: true, encoding: .utf8)
+
+        let result = captureShellEnvironment(envFile: envFile, processEnvironment: [:])
+        #expect(result["TIGHTLIP_SOURCE_STATUS"] == nil)
+    }
+
     @Test func leakedHelperVarIsStripped() throws {
         let tmp = try tempDir()
         defer { try? FileManager.default.removeItem(at: tmp) }

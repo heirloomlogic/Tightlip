@@ -10,7 +10,8 @@ When `Secrets.yml` declares multiple environment sections, exactly one is chosen
 |---|---|
 | `TIGHTLIP_ENV` is set to a non-empty value | The section whose name matches exactly. Build fails if no section matches. |
 | Two sections, exactly one named `prod` or `production`, and `CONFIGURATION=Release` | The `prod`/`production` section. |
-| Two sections, exactly one named `prod` or `production`, any other `CONFIGURATION` (including `Debug` and unset) | The non-production section. |
+| Two sections, exactly one named `prod` or `production`, and `CONFIGURATION=Debug` or unset | The non-production section. |
+| Two sections, exactly one named `prod` or `production`, and any other `CONFIGURATION` (a custom configuration like `AppStore` or `Beta`) | Build fails — Tightlip refuses to guess which keys a custom configuration should get. Set `TIGHTLIP_ENV`. |
 | Anything else (three sections without `TIGHTLIP_ENV`, two non-prod-named sections, or both `prod` *and* `production`) | Build fails with a message listing available environments. |
 
 Flat configs have no environment concept and ignore all of this. An empty `TIGHTLIP_ENV` is treated as unset.
@@ -20,6 +21,7 @@ Flat configs have no environment concept and ignore all of this. An empty `TIGHT
 - **Local dev:** add `export TIGHTLIP_ENV=staging` to `~/.zshenv`, or leave it unset and let Debug builds pick the non-production section automatically.
 - **CI release lane:** set `TIGHTLIP_ENV=production`, or rely on `CONFIGURATION=Release` if using Xcode.
 - **More than two environments (qa, uat, etc.):** always set `TIGHTLIP_ENV` explicitly — the two-section auto-inference doesn't fire.
+- **Custom Xcode configuration names (`AppStore`, `Beta`, …):** set `TIGHTLIP_ENV` per configuration, e.g. in each scheme. Inference only recognizes the stock `Debug`/`Release` names.
 
 > Warning: `CONFIGURATION` is set by Xcode and `xcodebuild` only. A plain `swift build -c release` does **not** set it, so inference resolves to the *non*-production section — a release binary with staging keys. If you build releases with SwiftPM directly, always set `TIGHTLIP_ENV=production` on that lane. The build log's `note: using environment '…'` line tells you what was picked.
 

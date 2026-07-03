@@ -22,6 +22,42 @@ jobs:
       - name: Test
         run: swift test
 
+  # Oldest supported toolchain: tools-version 6.1 → Xcode 16.3. Guards against
+  # accidentally adopting newer-stdlib API in a published build-tool package.
+  # Pinned to macos-15 because macos-latest will eventually drop Xcode 16.3.
+  test-macos-floor:
+    runs-on: macos-15
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+
+      - name: Select Xcode 16.3
+        run: sudo xcode-select -s /Applications/Xcode_16.3.app
+
+      - name: Test
+        run: swift test
+
+  # Exercise the actual product — plugin wiring, config-path resolution, tool
+  # execution inside a real build — through a standalone consumer package.
+  test-fixture:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+
+      - name: Build and run the plugin end to end
+        run: |
+          cd Fixtures/DemoApp
+          swift build
+          test "$(./.build/debug/DemoApp)" = "from-env-file"
+
+      - name: Env file edits re-trigger generation without a clean
+        run: |
+          cd Fixtures/DemoApp
+          printf 'export TIGHTLIP_DEMO_KEY=updated-value\n' > Sources/DemoApp/secrets.env
+          swift build
+          test "$(./.build/debug/DemoApp)" = "updated-value"
+
   # Build for iOS Simulator to guard against the plugin tool regressing to macOS-only
   # APIs. Xcode compiles a build-tool plugin's executable (and its source dependencies)
   # for the consuming app's destination platform, so TightlipCore must compile for iOS

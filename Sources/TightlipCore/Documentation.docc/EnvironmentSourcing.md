@@ -20,9 +20,15 @@ The result: identical resolution regardless of how the build was launched. Xcode
 
 ## Failure Modes
 
-The subshell sourcing has a **5-second timeout**. If sourcing fails (the file doesn't exist, the file errors out, or it just takes too long), the tool falls back to `ProcessInfo` alone and writes a single `note:` to stderr identifying the file.
+The subshell sourcing has a **5-second timeout**. If sourcing fails outright — the file doesn't exist, exits non-zero, calls `exit` before the environment dump, or takes too long — the tool falls back to `ProcessInfo` alone and writes a single `note:` to stderr identifying the file.
+
+If the file errors *partway* (say, a syntax error on one line), the exports above the failing line are still captured and used; a `note:` reports the exit status and warns that the environment may be partial. A missing variable in that situation usually means its `export` sits below the failing line.
 
 This means CI runners with no `~/.zshenv` work unchanged — the fallback kicks in immediately and the job's `env:` block is the sole source of values.
+
+## Input Tracking
+
+The sourced env file (the default `~/.zshenv` or the declared `envFile:`) is registered as a build input alongside `Secrets.yml`, so editing it re-triggers generation on the next build — no clean needed. Because the generated file is deterministic, a re-source that yields the same values produces a byte-identical file and cascades no recompiles. Values that come from non-file sources (an interactive shell session, an Xcode scheme, a CI job's `env:` block) still require a clean build to pick up, since there's no file for the build system to watch.
 
 ## Slow `.zshenv` Cases
 

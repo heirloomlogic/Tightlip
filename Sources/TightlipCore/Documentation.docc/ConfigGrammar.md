@@ -9,12 +9,16 @@ Tightlip parses a small, strict subset of YAML. The parser rejects anything ambi
 ## Rules
 
 - Property names and env-var names must be bare ASCII identifiers (`[A-Za-z_][A-Za-z0-9_]*`). No quoting.
-- Property names may not be Swift keywords (`class`, `default`, …) or the names the generated enum reserves for its decode shim (`salt`, `decode`). Either would render a non-compiling generated file, so the parser rejects them with a line number instead.
-- `#` at the start of a line is a comment. Inline comments after a value are not supported.
+- Property names may not be:
+  - Swift keywords (`class`, `default`, …) or the member names Swift rejects outright (`Type`, `Protocol`, `_`);
+  - names the generated enum reserves for its decode shim, or symbols that shim references (`salt`, `decode`, `Data`, `String`, `UInt8`, `UTF8`, `fatalError`);
+  - `envFile`, which is reserved for the directive.
+  Any of these would render a non-compiling (or ambiguous) generated file, so the parser rejects them with a line number instead.
+- `#` at the start of a line is a comment. Inline comments after a value are not supported — including after an `envFile:` path.
 - Blank lines are fine. Tabs are not — anywhere.
 - Flat mode: no leading whitespace on mapping lines.
 - Sectioned mode: section headers at column 1, content at exactly 2-space indent.
-- Every declared secret is required at build time. If an env var is unset, the build fails with a message pointing at the missing variable. Truly optional values should be read from `ProcessInfo` at runtime rather than declared here.
+- Every declared secret is required at build time. If an env var is unset, the build fails with a message pointing at the missing variable (an env var set to the empty string counts as set, with a `note:` in the log). Truly optional values should be read from `ProcessInfo` at runtime rather than declared here.
 - Duplicate keys, empty files, and anything else outside this grammar are parse errors with a line number.
 
 ## Format Detection

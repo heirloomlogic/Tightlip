@@ -6,7 +6,7 @@ struct ParseYAMLConfigFlatTests {
     // MARK: Happy path
 
     @Test func parsesSingleMapping() throws {
-        let result = try parseFlatYAMLConfig("revenueCatAPIKey: APP_RC", path: "t.yml")
+        let result = try parseFlat("revenueCatAPIKey: APP_RC", path: "t.yml")
         #expect(result == [ParsedSecret(name: "revenueCatAPIKey", envVar: "APP_RC")])
     }
 
@@ -15,13 +15,13 @@ struct ParseYAMLConfigFlatTests {
             beta: B
             alpha: A
             """
-        let result = try parseFlatYAMLConfig(text, path: "t.yml")
+        let result = try parseFlat(text, path: "t.yml")
         #expect(result.map(\.name) == ["beta", "alpha"])
     }
 
     @Test func skipsBlankLines() throws {
         let text = "\n\nfoo: BAR\n\n"
-        let result = try parseFlatYAMLConfig(text, path: "t.yml")
+        let result = try parseFlat(text, path: "t.yml")
         #expect(result == [ParsedSecret(name: "foo", envVar: "BAR")])
     }
 
@@ -32,39 +32,39 @@ struct ParseYAMLConfigFlatTests {
             foo: BAR
             # trailing
             """
-        let result = try parseFlatYAMLConfig(text, path: "t.yml")
+        let result = try parseFlat(text, path: "t.yml")
         #expect(result == [ParsedSecret(name: "foo", envVar: "BAR")])
     }
 
     @Test func handlesCRLFLineEndings() throws {
         let text = "foo: BAR\r\nbaz: QUX\r\n"
-        let result = try parseFlatYAMLConfig(text, path: "t.yml")
+        let result = try parseFlat(text, path: "t.yml")
         #expect(result.map(\.name) == ["foo", "baz"])
         #expect(result.map(\.envVar) == ["BAR", "QUX"])
     }
 
     @Test func allowsZeroSpacesAfterColon() throws {
-        let result = try parseFlatYAMLConfig("foo:BAR", path: "t.yml")
+        let result = try parseFlat("foo:BAR", path: "t.yml")
         #expect(result == [ParsedSecret(name: "foo", envVar: "BAR")])
     }
 
     @Test func allowsMultipleSpacesAfterColon() throws {
-        let result = try parseFlatYAMLConfig("foo:     BAR", path: "t.yml")
+        let result = try parseFlat("foo:     BAR", path: "t.yml")
         #expect(result == [ParsedSecret(name: "foo", envVar: "BAR")])
     }
 
     @Test func trimsTrailingSpacesOnValue() throws {
-        let result = try parseFlatYAMLConfig("foo: BAR    ", path: "t.yml")
+        let result = try parseFlat("foo: BAR    ", path: "t.yml")
         #expect(result == [ParsedSecret(name: "foo", envVar: "BAR")])
     }
 
     @Test func allowsDigitsAfterFirstCharInIdentifiers() throws {
-        let result = try parseFlatYAMLConfig("apiKeyV2: APP_V2_KEY", path: "t.yml")
+        let result = try parseFlat("apiKeyV2: APP_V2_KEY", path: "t.yml")
         #expect(result == [ParsedSecret(name: "apiKeyV2", envVar: "APP_V2_KEY")])
     }
 
     @Test func allowsUnderscoreStartingIdentifiers() throws {
-        let result = try parseFlatYAMLConfig("_k: _E", path: "t.yml")
+        let result = try parseFlat("_k: _E", path: "t.yml")
         #expect(result == [ParsedSecret(name: "_k", envVar: "_E")])
     }
 
@@ -149,10 +149,24 @@ struct ParseYAMLConfigFlatTests {
         expectParseError("\(name): APP_VALUE", line: 1, reasonContains: "reserved")
     }
 
+    @Test(arguments: ["Type", "Protocol", "_"])
+    func restrictedMemberNameAsSecretNameIsParseError(name: String) {
+        // Swift forbids type members named `Type`/`Protocol` (metatype syntax) and
+        // `_` binds nothing — all three compile-break the generated file.
+        expectParseError("\(name): APP_VALUE", line: 1, reasonContains: "member")
+    }
+
+    @Test(arguments: ["Data", "String", "UInt8", "UTF8", "fatalError"])
+    func decodeShimSymbolAsSecretNameIsParseError(name: String) {
+        // A member with one of these names shadows a symbol the generated decode
+        // shim references, breaking compilation of the generated file.
+        expectParseError("\(name): APP_VALUE", line: 1, reasonContains: "reserved")
+    }
+
     @Test func swiftKeywordAsEnvVarNameIsAllowed() throws {
         // Only the property name is emitted as a Swift identifier; the env var
         // side never appears in generated code.
-        let result = try parseFlatYAMLConfig("apiKey: class", path: "t.yml")
+        let result = try parseFlat("apiKey: class", path: "t.yml")
         #expect(result == [ParsedSecret(name: "apiKey", envVar: "class")])
     }
 
@@ -178,7 +192,16 @@ struct ParseYAMLConfigFlatTests {
         }
     }
 
-    // MARK: Helper
+    // MARK: Helpers
+
+    /// Parses `text` and unwraps the flat result, failing the test on a sectioned config.
+    private func parseFlat(_ text: String, path: String) throws -> [ParsedSecret] {
+        guard case .flat(let secrets) = try parseYAMLConfig(text, path: path) else {
+            Issue.record("expected flat config")
+            return []
+        }
+        return secrets
+    }
 
     private func expectParseError(
         _ text: String,
