@@ -5,15 +5,49 @@ on:
   push:
     branches: [main]
 
+permissions:
+  contents: read
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
+  # Lint does not need macOS: swift-format lints by parsing source, and it ships in
+  # the Swift Linux toolchain. This repo is public, so the move buys runner queue
+  # time rather than money.
+  #
+  # The container pins the compiler, and that pins the swift-format version with it.
+  # A floating runner image would otherwise change lint results with nothing in the
+  # diff to explain it. swift:6.3.3-noble tracks Xcode 26.6, the macos-26 default
+  # this job ran on before.
   swift-format-lint:
-    runs-on: macos-26
+    runs-on: ubuntu-24.04-arm
+    container: swift:6.3.3-noble
+    timeout-minutes: 10
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Nothing here pushes, and `swift package resolve` fetches and evaluates
+          # third-party manifests in this job. The token has no business surviving
+          # into `.git/config` where they could read it.
+          persist-credentials: false
+
+      # The container runs as root over a checkout git considers foreign. Without
+      # this, git refuses with "dubious ownership" wherever SwiftPM shells out to it.
+      - name: Trust the workspace
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      # SwiftPM's shared download cache only — content-addressed dependency
+      # checkouts. Deliberately not `.build`: a stale hit there is a debugging
+      # session, not a saved minute.
+      - name: Cache SwiftPM downloads
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: /root/.cache/org.swift.swiftpm
+          key: swiftpm-lint-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Package.swift') }}
+          restore-keys: |
+            swiftpm-lint-${{ runner.os }}-${{ runner.arch }}-
 
       - name: Setup swift-format lint
         run: |
@@ -21,5 +55,8 @@ jobs:
           swift package resolve
           .build/checkouts/Persnicket/bin/ci-lint-setup
 
+      # `swift-format` straight from the container toolchain, not `xcrun
+      # swift-format`: there is no Xcode here, and `xcrun` reaches for the macOS
+      # toolchain.
       - name: Lint (strict)
-        run: xcrun swift-format lint --strict --parallel --recursive --configuration .swift-format Sources Tests
+        run: swift-format lint --strict --parallel --recursive --configuration .swift-format Sources Tests

@@ -5,20 +5,38 @@ on:
     tags:
       - "[0-9]+.[0-9]+.[0-9]+*"
   workflow_dispatch:
+    inputs:
+      dry-run:
+        description: "Build the docs but skip the gh-pages deploy"
+        type: boolean
+        default: false
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: false
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   documentation:
     runs-on: macos-latest
+    timeout-minutes: 30
+    permissions:
+      # The "Deploy to GitHub Pages" step pushes the built docs to the gh-pages
+      # branch. Nothing else in this workflow needs write.
+      contents: write
     steps:
       - name: Checkout repository
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The DocC command plugin runs in this job after checkout, and this job
+          # holds `contents: write`. github-pages-deploy-action authenticates with
+          # its own `token:` input (default `${{ github.token }}`) rather than the
+          # credential git writes into `.git/config`, so dropping the persisted
+          # credential leaves the deploy working. Verified in the action's
+          # `action.yml` at v4.9.0.
+          persist-credentials: false
 
       - name: Clean docs directory
         run: rm -rf ./docs
@@ -36,8 +54,13 @@ jobs:
       - name: Create .nojekyll file
         run: touch ./docs/.nojekyll
 
+      # Skipped on a `workflow_dispatch` run with dry-run=true, so the DocC build and
+      # the hardened checkout can be proven from a branch without publishing. The
+      # first clause is explicit rather than relying on `inputs` being null off a tag
+      # push: on any non-dispatch event this deploys exactly as it did before.
       - name: Deploy to GitHub Pages
-        uses: JamesIves/github-pages-deploy-action@d92aa235d04922e8f08b40ce78cc5442fcfbfa2f # v4.8.0
+        if: ${{ github.event_name != 'workflow_dispatch' || !inputs.dry-run }}
+        uses: JamesIves/github-pages-deploy-action@fa24774553152dd7873cd16ebd8d959b010c5445 # v4.9.0
         with:
           branch: gh-pages
           folder: docs
