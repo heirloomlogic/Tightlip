@@ -1,5 +1,9 @@
 name: Tests
 
+# Both triggers are deliberate. This repo squash-merges only, so the commit that
+# lands on `main` is a new commit no PR run ever tested — the `push` run is not a
+# duplicate of the `pull_request` run. Actions are free on this public repo, so
+# there is nothing to save by cutting it.
 on:
   push:
     branches:
@@ -8,6 +12,9 @@ on:
     branches:
       - "**"
 
+permissions:
+  contents: read
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -15,9 +22,15 @@ concurrency:
 jobs:
   test-macos:
     runs-on: macos-latest
+    timeout-minutes: 15
     steps:
       - name: Checkout repository
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # No job here pushes, and every one of them runs SwiftPM build-tool plugins
+          # after checkout. The token must not sit in `.git/config` where they can
+          # read it.
+          persist-credentials: false
 
       - name: Test
         run: swift test
@@ -27,9 +40,12 @@ jobs:
   # Pinned to macos-15 because macos-latest will eventually drop Xcode 16.3.
   test-macos-floor:
     runs-on: macos-15
+    timeout-minutes: 15
     steps:
       - name: Checkout repository
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Select Xcode 16.3
         run: sudo xcode-select -s /Applications/Xcode_16.3.app
@@ -41,9 +57,12 @@ jobs:
   # execution inside a real build — through a standalone consumer package.
   test-fixture:
     runs-on: macos-latest
+    timeout-minutes: 15
     steps:
       - name: Checkout repository
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Build and run the plugin end to end
         run: |
@@ -64,9 +83,12 @@ jobs:
   # even though it only ever runs on the host.
   build-ios:
     runs-on: macos-latest
+    timeout-minutes: 20
     steps:
       - name: Checkout repository
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Build for iOS Simulator
         run: |
