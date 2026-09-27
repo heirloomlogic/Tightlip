@@ -11,7 +11,7 @@ The Lipservice plugin runs as a build-tool phase, so it fires on **every** `xcod
 A build fails the moment a declared secret is unresolved, regardless of why the build was launched:
 
 ```
-error: environment variable ACME_API_KEY must be set to generate Secrets.acmeAPIKey.
+error: environment variable ACME_API_KEY must be set to generate Secrets.acmeAPIKey
 ```
 
 It's easy to set the secret on the distribution lanes and forget the unit-test lane, because tests feel unrelated to secrets. They aren't — compiling the target runs the plugin.
@@ -35,7 +35,9 @@ Test lanes almost never exercise the secret at runtime — they just need *somet
   run: xcodebuild test …
 ```
 
-CI runners have no `~/.zshenv`, so the plugin reads these values straight from the job's environment via `ProcessInfo` with no shell sourcing involved. See <doc:EnvironmentSourcing>.
+CI runners have no `~/.zshenv`, so these values come straight from the job's environment with no shell sourcing involved. The plugin forwards every variable `Secrets.yml` names, plus `TIGHTLIP_ENV`, to the tool, so a job's `env:` block also works under SwiftPM's default `swiftbuild` backend (Swift 6.4+), which runs build commands in a synthesized environment. See <doc:EnvironmentSourcing>.
+
+Forwarded values are tracked like files: a build that reuses a build directory with a different `TIGHTLIP_ENV` or secret value regenerates, with no clean step. If you cache the build directory (`.build`, DerivedData) between jobs, the cache holds your secrets — see <doc:Obfuscation>.
 
 ## Don't pass `-sdk iphonesimulator` — use `-destination` alone
 

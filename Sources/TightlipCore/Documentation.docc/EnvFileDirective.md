@@ -15,9 +15,19 @@ envFile: ~/.bash_profile
 revenueCatAPIKey: REVENUECAT_API_KEY
 ```
 
-The path is tilde-expanded against `$HOME`; relative paths resolve against the config's directory. Only `~/` (your own home) is expanded — the `~user/file` form is not supported and would be treated as a relative path.
+A leading `~/` expands to your home directory; relative paths resolve against the config's directory; absolute paths are used as written. The resolved path is standardized, so `./a/../b.env` and `b.env` name the same file.
 
-The path may not contain spaces or `#` (inline comments are not supported), and a bare identifier like `envFile: SOME_VAR` is rejected as ambiguous with a secret mapping — write `./SOME_VAR` for a genuinely relative path. If the declared file doesn't exist at build time, the build proceeds on the process environment alone and a `note:` in the log points at the resolved path.
+The path is taken literally, and the parser rejects forms that look like they'd expand but wouldn't:
+
+| Value | Error |
+|---|---|
+| `~`, or any path ending in `/` | `envFile must name a file, not a directory` |
+| Quotes, `$`, or backticks (`"./x.env"`, `$HOME/x.env`) | `envFile path must be written bare; quotes, '$', and backticks are not expanded` |
+| `~user/file` | `only a leading '~/' is expanded in an envFile path; '~user' paths are not supported` |
+
+The path also may not contain spaces or `#` (inline comments are not supported), and a bare identifier like `envFile: SOME_VAR` is rejected as ambiguous with a secret mapping — write `./SOME_VAR` for a genuinely relative path.
+
+If the declared file doesn't exist at build time, the build proceeds on the build environment alone and a `note:` in the log points at the resolved path. A path that exists but is a directory or unreadable gets a `note:` and the same fallback.
 
 The declared file (like `Secrets.yml` itself) is tracked as a build input, so editing it re-triggers generation on the next build — no clean needed.
 
@@ -30,7 +40,7 @@ The declared file (like `Secrets.yml` itself) is tracked as a build input, so ed
 | fish | `~/.config/tightlip.env` *(sidecar)* | Fish syntax isn't zsh-compatible; keep a file of `export KEY=value` lines |
 | nushell / xonsh / etc. | `~/.tightlip.env` *(sidecar)* | Same sidecar pattern as fish |
 
-CI runners typically have no `.zshenv`; the tool falls back to `ProcessInfo` and the job's `env:` block works unchanged.
+CI runners typically have no `.zshenv`; the tool uses the build environment alone and the job's `env:` block works unchanged.
 
 ## Project-Local Env File
 
@@ -47,9 +57,21 @@ revenueCatAPIKey: ACME_REVENUECAT_API_KEY
 export ACME_REVENUECAT_API_KEY="..."
 ```
 
-The file is sourced in the same `zsh -f` subshell, so it must use `export KEY=value` syntax — not bare `KEY=value` dotenv lines.
+The file is sourced in the same `zsh -f` subshell, so it must use `export KEY=value` syntax — not bare `KEY=value` dotenv lines. Write the values literally: a `$(security …)` or `$(op read …)` substitution comes back empty inside the build sandbox (see <doc:EnvironmentSourcing>).
 
-**Gitignore it.** A secrets file inside the source tree is one `git add` away from a committed secret. Add it to `.gitignore`; only `Secrets.yml` — the manifest of env-var *names* — belongs in source control.
+**Gitignore it.** A secrets file inside the source tree is one `git add` away from a committed secret. Add it to `.gitignore`, and `chmod 600` it; only `Secrets.yml` — the manifest of env-var *names* — belongs in source control.
+
+**Keep it out of the app bundle.** In an Xcode project the target's folder is synchronized, so Xcode copies every non-source file in it — this one included, plaintext values and all — into the built app. Clear the file's **Target Membership** checkbox in the File inspector, or keep it outside the target's folder (`envFile: ../secrets.env`). The plugin fails the build while the env file is a bundle resource.
+
+**Exclude it from a SwiftPM target.** Otherwise SwiftPM warns that it found an unhandled file in the target:
+
+```swift
+.target(
+    name: "MyApp",
+    exclude: ["secrets.env"],
+    plugins: [.plugin(name: "Lipservice", package: "Tightlip")]
+)
+```
 
 **Worktree caveat.** A project-local file lives inside each checkout, so every git worktree (and every fresh clone) needs its own copy. When you build the same project from multiple worktrees — e.g. parallel agents in Conductor — a single `~/.zshenv` is sourced identically by all of them, while a project-local file must be re-created per worktree. Prefer `~/.zshenv` (or a `~`-rooted sidecar) when worktree portability matters; use a project-local file only when you specifically want secrets scoped to one checkout.
 
