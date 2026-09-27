@@ -80,7 +80,7 @@ struct ObfuscatedRenderTests {
     /// ``renderSecretsEnum(_:environment:)``.
     private func decodeFromOutput(_ out: String, propertyName: String) throws -> String {
         let salt = try parseSalt(from: out)
-        let needle = "static let \(propertyName): String = Self.decode(\""
+        let needle = "static let \(propertyName): Swift.String = Self.decode(\""
         guard let range = out.range(of: needle) else {
             throw Failure.propertyNotFound(propertyName)
         }

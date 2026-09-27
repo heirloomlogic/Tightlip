@@ -67,7 +67,7 @@ public enum ConfigError: Error, Equatable, Sendable {
     /// The active environment could not be determined for a sectioned config.
     case indeterminateEnvironment(available: [String], reason: String)
 
-    /// Formatted message matching the `error:` output the CLI emits to stderr.
+    /// Human-readable description of the error, without a severity prefix.
     public var message: String {
         switch self {
         case .parse(let path, let line, let reason):
@@ -85,6 +85,23 @@ public enum ConfigError: Error, Equatable, Sendable {
                 Available environments: \(available.joined(separator: ", ")). \
                 Set TIGHTLIP_ENV to one of these values.
                 """
+        }
+    }
+
+    /// The line the build tool prints to stderr for this error, without a trailing newline.
+    ///
+    /// Parse errors use the `path:line: error: reason` form, which Xcode attributes to the
+    /// file and line (a clickable issue); `error: path:line: reason` would render as
+    /// unattributed text.
+    public var diagnostic: String {
+        switch self {
+        case .parse(let path, let line, let reason):
+            if let line {
+                return "\(path):\(line): error: \(reason)"
+            }
+            return "\(path): error: \(reason)"
+        case .missingEnvironmentVariable, .indeterminateEnvironment:
+            return "error: \(message)"
         }
     }
 }
@@ -122,6 +139,14 @@ public func parseYAMLConfig(_ text: String, path: String) throws(ConfigError) ->
 public func parseYAMLConfigFile(_ text: String, path: String) throws(ConfigError) -> ParsedConfigFile {
     let lines = text.components(separatedBy: "\n")
     let normalized = lines.map { $0.hasSuffix("\r") ? String($0.dropLast()) : $0 }
+
+    for (idx, line) in normalized.enumerated() {
+        let stripped = line.trimmingCharacters(in: .whitespaces)
+        if stripped.isEmpty || stripped.hasPrefix("#") { continue }
+        if let reason = invisibleCharacterReason(in: line) {
+            throw .parse(path: path, line: idx + 1, reason: reason)
+        }
+    }
 
     let (envFile, body) = try extractEnvFileDirective(normalized, path: path)
 
@@ -183,6 +208,31 @@ private func extractEnvFileDirective(
                 reason: "envFile path must not contain spaces or '#' (inline comments are not supported)"
             )
         }
+        if value.contains(where: { "\"'$`".contains($0) }) {
+            // Nothing here expands shell syntax, so `"./x.env"` or `$HOME/x.env` would
+            // silently become a literal relative path that never exists.
+            throw .parse(
+                path: path,
+                line: lineNumber,
+                reason: "envFile path must be written bare; quotes, '$', and backticks are not expanded"
+            )
+        }
+        if value == "~" || value.hasSuffix("/") {
+            // zsh's `source` of a directory succeeds and exports nothing, so this
+            // would otherwise be a silent no-op.
+            throw .parse(
+                path: path,
+                line: lineNumber,
+                reason: "envFile must name a file, not a directory"
+            )
+        }
+        if value.hasPrefix("~"), !value.hasPrefix("~/") {
+            throw .parse(
+                path: path,
+                line: lineNumber,
+                reason: "only a leading '~/' is expanded in an envFile path; '~user' paths are not supported"
+            )
+        }
         if isIdentifier(value) {
             throw .parse(
                 path: path,
@@ -197,6 +247,39 @@ private func extractEnvFileDirective(
         return (value, output)
     }
     return (nil, output)
+}
+
+/// Returns a parse-error reason for the first character in `line` that is invisible or
+/// renders like a plain space — a no-break space pasted from a chat app, a zero-width
+/// space, a stray carriage return — or nil if there is none.
+///
+/// Without this, such a character fails an identifier check further down and the error
+/// echoes a line that looks exactly like a valid one. Tabs are left to the grammar's
+/// dedicated tab error.
+private func invisibleCharacterReason(in line: String) -> String? {
+    for (offset, character) in line.enumerated() where character != " " && character != "\t" {
+        for scalar in character.unicodeScalars {
+            let properties = scalar.properties
+            let isInvisible: Bool
+            switch properties.generalCategory {
+            case .control, .format, .lineSeparator, .paragraphSeparator, .spaceSeparator:
+                isInvisible = true
+            default:
+                isInvisible = properties.isWhitespace
+            }
+            guard isInvisible else { continue }
+
+            if scalar == "\r" {
+                return "stray carriage return (U+000D) at column \(offset + 1); "
+                    + "save the file with LF or CRLF line endings"
+            }
+            let name = properties.name.map { " \($0)" } ?? ""
+            let fix = properties.isWhitespace ? "retype it as a plain space" : "delete it"
+            return "invisible character \(String(format: "U+%04X", scalar.value))\(name) "
+                + "at column \(offset + 1); \(fix)"
+        }
+    }
+    return nil
 }
 
 private func isSectionHeader(_ line: String) -> Bool {
@@ -266,7 +349,8 @@ private func parseSectioned(
     var currentSection: String?
     var currentSecrets: [ParsedSecret] = []
     var seen: [String: Int] = [:]
-    var sectionNames: Set<String> = []
+    // Header line per section, so section-level errors point at the header.
+    var headerLines: [String: Int] = [:]
 
     for (idx, rawLine) in lines.enumerated() {
         let lineNumber = idx + 1
@@ -288,15 +372,19 @@ private func parseSectioned(
             }
             if let prev = currentSection {
                 if currentSecrets.isEmpty {
-                    throw .parse(path: path, line: lineNumber, reason: "section '\(prev)' has no secrets")
+                    throw .parse(path: path, line: headerLines[prev], reason: "section '\(prev)' has no secrets")
                 }
                 sections.append(ParsedSection(name: prev, secrets: currentSecrets))
             }
             let name = String(stripped.dropLast())
-            if sectionNames.contains(name) {
-                throw .parse(path: path, line: lineNumber, reason: "duplicate section '\(name)'")
+            if let prior = headerLines[name] {
+                throw .parse(
+                    path: path,
+                    line: lineNumber,
+                    reason: "duplicate section '\(name)' (first defined on line \(prior))"
+                )
             }
-            sectionNames.insert(name)
+            headerLines[name] = lineNumber
             currentSection = name
             currentSecrets = []
             seen = [:]
@@ -343,7 +431,7 @@ private func parseSectioned(
 
     if let prev = currentSection {
         if currentSecrets.isEmpty {
-            throw .parse(path: path, line: nil, reason: "section '\(prev)' has no secrets")
+            throw .parse(path: path, line: headerLines[prev], reason: "section '\(prev)' has no secrets")
         }
         sections.append(ParsedSection(name: prev, secrets: currentSecrets))
     }
@@ -364,7 +452,7 @@ private func parseSectioned(
             if !extra.isEmpty { parts.append("unexpected \(extra.joined(separator: ", "))") }
             throw .parse(
                 path: path,
-                line: nil,
+                line: headerLines[section.name],
                 reason: "section '\(section.name)' differs from '\(sections[0].name)': \(parts.joined(separator: "; "))"
             )
         }
@@ -450,7 +538,7 @@ private func splitMapping(_ s: String) -> (String, String)? {
 private let swiftKeywords: Set<String> = [
     // Declarations
     "associatedtype", "class", "deinit", "enum", "extension", "fileprivate", "func",
-    "import", "init", "inout", "internal", "let", "open", "operator", "private",
+    "import", "init", "inout", "internal", "let", "operator", "private",
     "precedencegroup", "protocol", "public", "rethrows", "static", "struct",
     "subscript", "typealias", "var",
     // Statements
@@ -461,14 +549,15 @@ private let swiftKeywords: Set<String> = [
     "Any", "Self", "as", "false", "is", "nil", "self", "super", "throws", "true", "try",
 ]
 
-/// Member names the generated `Secrets` enum already uses for its decode shim, plus
-/// unqualified symbols the shim's body references. A property with one of these names
-/// would shadow the symbol inside the enum and break compilation of the generated file
-/// (qualifying the shim doesn't help: a member named `Foundation` shadows
-/// `Foundation.Data` just the same).
+/// Names the generated `Secrets` enum reserves for itself. `salt` would collide with the
+/// shim's stored property. `decode` technically compiles alongside `decode(_:)`, but is
+/// reserved so a property and the shim never share a name. The shim spells every
+/// library symbol module-qualified (`Foundation.Data`, `Swift.String`, …) so that
+/// neither a member nor a consumer type named `Data` or `UTF8` can shadow it — which in
+/// turn reserves the two module names, since a member named `Swift` would shadow the
+/// qualifier itself.
 private let generatedHelperNames: Set<String> = [
-    "salt", "decode",
-    "Data", "String", "UInt8", "UTF8", "fatalError",
+    "salt", "decode", "Swift", "Foundation",
 ]
 
 /// Names Swift rejects as member declarations even though they lex as identifiers:
@@ -542,7 +631,10 @@ public func resolveSecret(
 ///   - environment: The environment the resolution actually consulted.
 /// - Returns: A single-line diagnostic without a `note:` prefix or newline.
 public func missingEnvVarDiagnostic(envVar: String, environment: [String: String]) -> String {
-    let prefix = envVar.split(separator: "_").first.map(String.init) ?? envVar
+    // Leading underscores belong to the prefix: `_ACME_KEY` groups with `_ACME_*`.
+    let leading = envVar.prefix(while: { $0 == "_" })
+    let stem = envVar.dropFirst(leading.count).prefix(while: { $0 != "_" })
+    let prefix = String(leading + stem)
     let visible = environment.keys
         .filter { $0.hasPrefix("\(prefix)_") }
         .sorted()
@@ -551,6 +643,10 @@ public func missingEnvVarDiagnostic(envVar: String, environment: [String: String
 }
 
 /// Renders the generated `nonisolated enum Secrets { ... }` Swift source.
+///
+/// Every name must be an identifier that the parser accepts as a secret name, and
+/// `environment` must be an identifier; anything else traps rather than splicing
+/// arbitrary text into Swift source.
 ///
 /// Values are XOR-obfuscated with a 32-byte salt deterministically derived from the
 /// resolved name/value pairs, then base64-encoded. The generated enum exposes plaintext
@@ -571,9 +667,14 @@ public func renderSecretsEnum(
     let sorted = resolved.sorted { $0.name < $1.name }
     let salt = deriveSalt(for: sorted)
 
+    for (name, _) in sorted {
+        precondition(isIdentifier(name) && reservedNameReason(name) == nil, "invalid secret name '\(name)'")
+    }
+    precondition(environment.map(isIdentifier) ?? true, "invalid environment name")
+
     let properties =
         sorted
-        .map { "    static let \($0.name): String = Self.decode(\"\(obfuscate($0.value, salt: salt))\")" }
+        .map { "    static let \($0.name): Swift.String = Self.decode(\"\(obfuscate($0.value, salt: salt))\")" }
         .joined(separator: "\n")
 
     let saltLiteral = salt.map { String(format: "0x%02X", $0) }.joined(separator: ", ")
@@ -587,14 +688,19 @@ public func renderSecretsEnum(
         nonisolated enum Secrets {
         \(properties)
 
-            private static let salt: [UInt8] = [\(saltLiteral)]
-            private static func decode(_ encoded: String) -> String {
-                guard let data = Data(base64Encoded: encoded) else {
-                    fatalError("Tightlip: corrupt secret payload; clean and rebuild")
+            private static let salt: [Swift.UInt8] = [\(saltLiteral)]
+            private static func decode(_ encoded: Swift.String) -> Swift.String {
+                guard let data = Foundation.Data(base64Encoded: encoded) else {
+                    Swift.fatalError("Tightlip: corrupt secret payload; clean and rebuild")
                 }
-                var bytes = [UInt8](data)
-                for i in bytes.indices { bytes[i] ^= salt[i % salt.count] }
-                return String(decoding: bytes, as: UTF8.self)
+                var bytes: [Swift.UInt8] = []
+                bytes.reserveCapacity(data.count)
+                var saltIndex = 0
+                for byte in data {
+                    bytes.append(byte ^ salt[saltIndex])
+                    saltIndex = saltIndex == salt.count - 1 ? 0 : saltIndex + 1
+                }
+                return Swift.String(decoding: bytes, as: Swift.UTF8.self)
             }
         }
 
@@ -640,8 +746,9 @@ private let envFileHelperVar = "TIGHTLIP_ENV_FILE"
 /// clean source from one that aborted partway.
 private let sourceStatusSentinel = "TIGHTLIP_SOURCE_STATUS"
 
-/// Expands a leading `~` to the user's home directory and resolves relative paths
-/// against `configDir`. Paths that begin with `/` pass through unchanged.
+/// Expands a leading `~/` to the user's home directory and resolves relative paths
+/// against `configDir`. Paths that begin with `/` pass through unchanged. The result is
+/// standardized, so `a/../b` and doubled slashes don't produce distinct paths for one file.
 ///
 /// The Lipservice plugin duplicates these resolution cases (see `envFileInput` in
 /// `Plugins/Lipservice/Lipservice.swift`) — keep both in sync when changing them.
@@ -650,16 +757,37 @@ public func resolveEnvFilePath(
     configDir: URL,
     homeDirectory: URL
 ) -> URL {
+    let resolved: URL
     if rawPath.hasPrefix("~/") {
-        return homeDirectory.appendingPathComponent(String(rawPath.dropFirst(2)))
+        resolved = homeDirectory.appendingPathComponent(String(rawPath.dropFirst(2)))
+    } else if rawPath.hasPrefix("/") {
+        resolved = URL(fileURLWithPath: rawPath)
+    } else {
+        resolved = configDir.appendingPathComponent(rawPath)
     }
-    if rawPath == "~" {
-        return homeDirectory
+    return resolved.standardizedFileURL
+}
+
+/// The result of ``captureShellEnvironment(envFile:processEnvironment:timeout:onNote:)``.
+public struct CapturedEnvironment: Equatable, Sendable {
+    /// The env file's exports with the process environment layered on top, per key.
+    public let merged: [String: String]
+
+    /// Keys the env file assigned a non-empty value that the process environment then
+    /// overrode with a different one.
+    ///
+    /// The capture subshell inherits the process environment, so a key only lands here
+    /// when the file itself reassigned it — typically because the terminal that launched
+    /// the build still exports a value the file has since replaced. Empty file values are
+    /// left out: a `$(…)` export that failed inside the build sandbox yields "", and the
+    /// build environment overriding it is the desired outcome.
+    public let overriddenKeys: Set<String>
+
+    /// Creates a captured environment.
+    public init(merged: [String: String], overriddenKeys: Set<String> = []) {
+        self.merged = merged
+        self.overriddenKeys = overriddenKeys
     }
-    if rawPath.hasPrefix("/") {
-        return URL(fileURLWithPath: rawPath)
-    }
-    return configDir.appendingPathComponent(rawPath)
 }
 
 /// Sources `envFile` in a clean zsh subshell, captures the resulting environment, and
@@ -667,28 +795,40 @@ public func resolveEnvFilePath(
 ///
 /// Behavior:
 /// - If `envFile` does not exist on disk, returns `processEnvironment` unchanged (silent).
-/// - If the subshell fails, times out, exits before dumping, or emits malformed output,
-///   emits a single note and returns `processEnvironment` unchanged.
+/// - If `envFile` is a directory or unreadable, or the subshell fails, times out, exits
+///   before dumping, or emits malformed output, emits a single note and returns
+///   `processEnvironment` unchanged.
 /// - If `source` aborts partway (e.g. a syntax error mid-file) but the dump still runs,
 ///   emits a note and returns the merged dict — exports above the failing line are
 ///   visible, exports below it are not.
+/// - A sourced value that is not valid UTF-8 is dropped with a note rather than decoded
+///   lossily into a corrupted secret.
 /// - On success, returns the merged dict: sourced env, then `processEnvironment` overlaid.
 ///
 /// - Parameters:
 ///   - envFile: Absolute path to a shell-sourceable file (e.g. `~/.zshenv` expanded).
-///   - processEnvironment: The current process's environment, used as the per-key override.
+///   - processEnvironment: The build's environment: the subshell's starting environment
+///     and the per-key override.
 ///   - timeout: Max seconds to wait for the subshell. Defaults to 5.
 ///   - onNote: Receives diagnostic notes. Defaults to writing `note: …` lines to stderr.
-/// - Returns: The merged environment dictionary.
+/// - Returns: The merged environment and the keys whose file-assigned value was overridden.
 public func captureShellEnvironment(
     envFile: URL,
     processEnvironment: [String: String],
     timeout: TimeInterval = 5,
     onNote: ((String) -> Void)? = nil
-) -> [String: String] {
+) -> CapturedEnvironment {
     #if os(macOS)
-    guard FileManager.default.fileExists(atPath: envFile.path) else {
-        return processEnvironment
+    var isDirectory: ObjCBool = false
+    guard FileManager.default.fileExists(atPath: envFile.path, isDirectory: &isDirectory) else {
+        return CapturedEnvironment(merged: processEnvironment)
+    }
+    if isDirectory.boolValue || !FileManager.default.isReadableFile(atPath: envFile.path) {
+        return fallbackToProcessEnvironment(
+            reason: "\(envFile.path) is \(isDirectory.boolValue ? "a directory" : "not readable")",
+            processEnvironment: processEnvironment,
+            onNote: onNote
+        )
     }
 
     let process = Process()
@@ -697,17 +837,32 @@ public func captureShellEnvironment(
     // NUL-terminated TIGHTLIP_SOURCE_STATUS entry carrying `source`'s exit status. An
     // `exit` inside the env file kills the subshell before the dump — detectable as a
     // missing sentinel — and a mid-file syntax error surfaces as a non-zero status.
+    //
+    // The pipe is parked on fd 3 and stdout/stderr point at /dev/null for everything
+    // except the two dump commands, so nothing else the file leaves behind — a DEBUG,
+    // ZERR, or EXIT trap, a zshexit hook, a background job — can write into the dump.
+    // After `source`: `&& … ||` keeps a file-set ERR_EXIT from killing the shell,
+    // `emulate -R zsh` resets options (ERR_EXIT/ERR_RETURN would otherwise abort the
+    // remaining lines), `trap -` and the hook reset stop traps from running, and
+    // dropping functions keeps them from shadowing `printf`. A failing `env` (e.g. an
+    // environment past ARG_MAX) must not be masked by printf's status.
     process.arguments = [
         "-f",
         "-c",
-        "source \"$\(envFileHelperVar)\" >/dev/null 2>&1; rc=$?; /usr/bin/env -0; "
-            + "printf '\(sourceStatusSentinel)=%d\\0' \"$rc\"",
+        "exec 3>&1 >/dev/null 2>&1; "
+            + "source \"$\(envFileHelperVar)\" </dev/null && __tightlip_rc=0 || __tightlip_rc=$?; "
+            + "emulate -R zsh; trap -; zshexit_functions=(); unfunction -m '*'; "
+            + "/usr/bin/env -0 >&3 || exit 125; "
+            + "builtin printf '\(sourceStatusSentinel)=%d\\0' \"$__tightlip_rc\" >&3",
     ]
     var childEnv = processEnvironment
     childEnv[envFileHelperVar] = envFile.path
+    // A file-exported sentinel would otherwise ride along in the dump.
+    childEnv[sourceStatusSentinel] = nil
     process.environment = childEnv
 
     let outputPipe = Pipe()
+    process.standardInput = FileHandle.nullDevice
     process.standardOutput = outputPipe
     process.standardError = FileHandle.nullDevice
 
@@ -742,12 +897,12 @@ public func captureShellEnvironment(
     }
 
     guard exited.wait(timeout: .now() + timeout) == .success else {
-        // SIGTERM first so zsh can clean up its children; escalate to SIGKILL
-        // for subshells whose env file traps TERM.
+        // SIGTERM first so zsh can clean up its children, then SIGKILL the whole
+        // process group (Foundation starts zsh as its leader) whether or not zsh itself
+        // exited: a TERM-ignoring child would otherwise outlive the build as an orphan.
         process.terminate()
-        if exited.wait(timeout: .now() + 0.5) != .success {
-            kill(process.processIdentifier, SIGKILL)
-        }
+        _ = exited.wait(timeout: .now() + 0.5)
+        killpg(process.processIdentifier, SIGKILL)
         readHandle.readabilityHandler = nil
         return fallbackToProcessEnvironment(
             reason: "sourcing \(envFile.path) timed out after \(timeout)s",
@@ -781,13 +936,8 @@ public func captureShellEnvironment(
         outputData = Data()
     }
 
-    var sourced: [String: String] = [:]
-    for part in outputData.split(separator: 0x00, omittingEmptySubsequences: true) {
-        let entry = String(decoding: part, as: UTF8.self)
-        guard let equalsIdx = entry.firstIndex(of: "=") else { continue }
-        let key = String(entry[entry.startIndex..<equalsIdx])
-        let value = String(entry[entry.index(after: equalsIdx)...])
-        sourced[key] = value
+    var sourced = parseEnvironmentEntries(outputData) { key in
+        emitNote("\(key) exported by \(envFile.path) is not valid UTF-8 and was ignored", onNote: onNote)
     }
 
     guard let sourceStatus = sourced[sourceStatusSentinel] else {
@@ -813,16 +963,41 @@ public func captureShellEnvironment(
     }
 
     sourced[envFileHelperVar] = nil
+    var overridden: Set<String> = []
     for (key, value) in processEnvironment {
+        if let fileValue = sourced[key], !fileValue.isEmpty, fileValue != value {
+            overridden.insert(key)
+        }
         sourced[key] = value
     }
-    return sourced
+    return CapturedEnvironment(merged: sourced, overriddenKeys: overridden)
     #else
     // The build tool only ever runs on the macOS host; this branch exists solely so the
     // sources compile when Xcode builds the plugin tool for a non-macOS destination (a
     // long-standing Xcode behavior). It is never executed.
-    return processEnvironment
+    return CapturedEnvironment(merged: processEnvironment)
     #endif
+}
+
+/// Parses NUL-terminated `KEY=VALUE` entries — `env -0` output, or the environment file
+/// the Lipservice plugin forwards. Entries without `=` are skipped; later duplicates win.
+/// A value that is not valid UTF-8 is dropped and reported through `onInvalidUTF8`,
+/// rather than decoded lossily into a corrupted secret.
+private func parseEnvironmentEntries(
+    _ data: Data,
+    onInvalidUTF8: (String) -> Void
+) -> [String: String] {
+    var entries: [String: String] = [:]
+    for part in data.split(separator: 0x00, omittingEmptySubsequences: true) {
+        guard let equalsIdx = part.firstIndex(of: UInt8(ascii: "=")) else { continue }
+        let key = String(decoding: part[..<equalsIdx], as: UTF8.self)
+        guard let value = String(data: Data(part[part.index(after: equalsIdx)...]), encoding: .utf8) else {
+            onInvalidUTF8(key)
+            continue
+        }
+        entries[key] = value
+    }
+    return entries
 }
 
 #if os(macOS)
@@ -838,9 +1013,9 @@ private func fallbackToProcessEnvironment(
     reason: String,
     processEnvironment: [String: String],
     onNote: ((String) -> Void)?
-) -> [String: String] {
-    emitNote("\(reason); using process environment only", onNote: onNote)
-    return processEnvironment
+) -> CapturedEnvironment {
+    emitNote("\(reason); using the build environment only", onNote: onNote)
+    return CapturedEnvironment(merged: processEnvironment)
 }
 
 private final class PipeBuffer: @unchecked Sendable {
@@ -860,3 +1035,178 @@ private final class PipeBuffer: @unchecked Sendable {
     }
 }
 #endif
+
+// MARK: - Build tool entry point
+
+/// Runs one Lipservice generation: parse the config, assemble the build environment,
+/// select the section, resolve every secret, and write the generated file.
+///
+/// Diagnostics go to `emit` as complete lines without trailing newlines, in the
+/// `error:` / `warning:` / `note:` forms Xcode and SwiftPM surface in build logs.
+///
+/// - Parameters:
+///   - configPath: Path to `Secrets.yml`.
+///   - outputPath: Where to write the generated Swift file. Left untouched when the
+///     rendered source matches what is already there, so a re-run with unchanged inputs
+///     doesn't force the file to recompile.
+///   - forwardedEnvironmentPath: A file of NUL-terminated `KEY=VALUE` entries the
+///     Lipservice plugin copied from its own environment, or nil. SwiftPM's `swiftbuild`
+///     backend runs build commands in a synthesized environment, so this file is the only
+///     way the caller's variables reach the tool there.
+///   - processEnvironment: The tool's own environment. Wins per key over forwarded entries.
+///   - homeDirectory: Directory a leading `~/` in the env file path expands to.
+///   - emit: Receives each diagnostic line.
+/// - Returns: `true` on success; `false` once at least one `error:` line was emitted.
+public func generateSecretsFile(
+    configPath: String,
+    outputPath: String,
+    forwardedEnvironmentPath: String?,
+    processEnvironment: [String: String],
+    homeDirectory: URL,
+    emit: (String) -> Void
+) -> Bool {
+    let configURL = URL(fileURLWithPath: configPath)
+    let configText: String
+    do {
+        configText = try String(contentsOf: configURL, encoding: .utf8)
+    } catch let error as CocoaError where error.code == .fileReadNoSuchFile {
+        emit(
+            "error: Tightlip config missing at \(configPath). Create Secrets.yml there — "
+                + "in a Swift package, the target's source directory; in an Xcode project, "
+                + "a folder named after the target's display name, beside the .xcodeproj"
+        )
+        return false
+    } catch let error as CocoaError
+        where error.code == .fileReadInapplicableStringEncoding || error.code == .fileReadCorruptFile
+    {
+        emit("\(configPath): error: config is not valid UTF-8; save it with UTF-8 encoding")
+        return false
+    } catch {
+        emit("error: failed to read \(configPath): \(error.localizedDescription)")
+        return false
+    }
+
+    let configFile: ParsedConfigFile
+    do {
+        configFile = try parseYAMLConfigFile(configText, path: configPath)
+    } catch {
+        emit(error.diagnostic)
+        return false
+    }
+
+    var buildEnvironment: [String: String] = [:]
+    if let forwardedEnvironmentPath {
+        if let data = FileManager.default.contents(atPath: forwardedEnvironmentPath) {
+            buildEnvironment = parseEnvironmentEntries(data) { key in
+                emit("note: forwarded value of \(key) is not valid UTF-8 and was ignored")
+            }
+        } else {
+            emit("note: forwarded environment missing at \(forwardedEnvironmentPath)")
+        }
+    }
+    buildEnvironment.merge(processEnvironment) { _, process in process }
+
+    let envFileURL = resolveEnvFilePath(
+        configFile.envFile ?? TightlipDefaults.envFilePath,
+        configDir: configURL.deletingLastPathComponent(),
+        homeDirectory: homeDirectory
+    )
+    // An absent default ~/.zshenv is the normal CI case and stays silent, but an
+    // explicitly declared envFile that doesn't resolve is a misconfiguration worth
+    // pointing at before the missing-env-var errors it will cause.
+    if configFile.envFile != nil, !FileManager.default.fileExists(atPath: envFileURL.path) {
+        emit("note: declared envFile not found at \(envFileURL.path); using the build environment only")
+    }
+    var captureNotes: [String] = []
+    let captured = captureShellEnvironment(
+        envFile: envFileURL,
+        processEnvironment: buildEnvironment,
+        onNote: { captureNotes.append($0) }
+    )
+    for note in captureNotes {
+        emit("note: \(note)")
+    }
+    let environment = captured.merged
+
+    // Never print either value — only that the file's copy lost.
+    func warnIfOverridden(_ key: String) {
+        guard captured.overriddenKeys.contains(key) else { return }
+        emit(
+            "warning: \(key) from the build environment overrides the different value "
+                + "\(envFileURL.path) exports; if the file is current, restart the terminal "
+                + "or Xcode session that launched this build"
+        )
+    }
+
+    let secrets: [ParsedSecret]
+    var envName: String?
+    switch configFile.secrets {
+    case .flat(let parsed):
+        secrets = parsed
+    case .sectioned(let sections):
+        // Overriding the file's TIGHTLIP_ENV for one build is routine, and the selected
+        // section is printed below anyway; a note is enough.
+        if captured.overriddenKeys.contains("TIGHTLIP_ENV") {
+            emit("note: TIGHTLIP_ENV from the build environment overrides the value \(envFileURL.path) exports")
+        }
+        let resolved: String
+        do {
+            resolved = try resolveEnvironment(sections: sections, environment: environment)
+        } catch {
+            emit(error.diagnostic)
+            return false
+        }
+        guard let section = sections.first(where: { $0.name == resolved }) else {
+            emit("error: internal error: resolved environment '\(resolved)' not found in sections")
+            return false
+        }
+        envName = resolved
+        secrets = section.secrets
+    }
+
+    // Printed before resolution so a wrong-section pick is visible right above the
+    // missing-variable errors it tends to cause.
+    if let envName {
+        emit("note: using environment '\(envName)'")
+    }
+
+    // Resolve every secret before failing so one build surfaces every missing variable,
+    // not one per fix-rebuild cycle. Each failure gets its own `error:` line (one issue
+    // each in Xcode) with its typo-hunting note.
+    var resolved: [(name: String, value: String)] = []
+    var anyMissing = false
+    for secret in secrets {
+        do {
+            let entry = try resolveSecret(secret, environment: environment)
+            warnIfOverridden(secret.envVar)
+            if entry.value.isEmpty {
+                // A warning, not a note: inside the build sandbox a `$(security …)` or
+                // `$(op read …)` export fails with status 0 and yields "", and a note is
+                // easy to miss while an empty API key ships.
+                emit("warning: \(secret.envVar) is set but empty; Secrets.\(secret.name) will be \"\"")
+            }
+            resolved.append(entry)
+        } catch {
+            emit("note: \(missingEnvVarDiagnostic(envVar: secret.envVar, environment: environment))")
+            emit(error.diagnostic)
+            anyMissing = true
+        }
+    }
+    if anyMissing {
+        emit("note: set the missing variable(s) in your shell, ~/.zshenv (for Xcode.app), or your CI environment")
+        return false
+    }
+
+    let output = renderSecretsEnum(resolved, environment: envName)
+    let outputURL = URL(fileURLWithPath: outputPath)
+    if let existing = try? Data(contentsOf: outputURL), existing == Data(output.utf8) {
+        return true
+    }
+    do {
+        try output.write(to: outputURL, atomically: true, encoding: .utf8)
+    } catch {
+        emit("error: failed to write \(outputPath): \(error.localizedDescription)")
+        return false
+    }
+    return true
+}

@@ -5,7 +5,7 @@ import TightlipCore
 struct RenderSecretsEnumTests {
     @Test func rendersSingleSecretAsObfuscatedDecodeCall() {
         let out = renderSecretsEnum([(name: "revenueCatAPIKey", value: "abc")])
-        #expect(out.contains("static let revenueCatAPIKey: String = Self.decode(\""))
+        #expect(out.contains("static let revenueCatAPIKey: Swift.String = Self.decode(\""))
     }
 
     @Test func sortsSecretsAlphabetically() {
@@ -67,11 +67,14 @@ struct RenderSecretsEnumTests {
         #expect(hexCount == 32)
     }
 
-    @Test func decodeFunctionShape() {
+    @Test func decodeShimQualifiesLibrarySymbols() {
+        // A consumer type named `Data` or `UTF8` in the same module must not capture
+        // the shim's references; every library symbol is spelled module-qualified.
         let out = renderSecretsEnum([(name: "k", value: "v")])
-        #expect(out.contains("private static func decode(_ encoded: String) -> String"))
-        #expect(out.contains("Data(base64Encoded: encoded)"))
-        #expect(out.contains("bytes[i] ^= salt[i % salt.count]"))
+        #expect(out.contains("private static func decode(_ encoded: Swift.String) -> Swift.String"))
+        #expect(out.contains("Foundation.Data(base64Encoded: encoded)"))
+        #expect(out.contains("Swift.String(decoding: bytes, as: Swift.UTF8.self)"))
+        #expect(out.contains("Swift.fatalError("))
     }
 
     @Test func decodeTrapsInsteadOfReturningEmptyString() {
