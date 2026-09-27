@@ -67,15 +67,33 @@ jobs:
       - name: Build and run the plugin end to end
         run: |
           cd Fixtures/DemoApp
-          swift build
+          swift build --product DemoApp
           test "$(./.build/debug/DemoApp)" = "from-env-file"
 
       - name: Env file edits re-trigger generation without a clean
         run: |
           cd Fixtures/DemoApp
           printf 'export TIGHTLIP_DEMO_KEY=updated-value\n' > Sources/DemoApp/secrets.env
-          swift build
+          swift build --product DemoApp
           test "$(./.build/debug/DemoApp)" = "updated-value"
+
+      # SectionedDemo's values exist only in the job's environment. SwiftPM's
+      # swiftbuild backend runs build commands in a synthesized environment, so this
+      # proves the plugin forwards them — and that flipping TIGHTLIP_ENV regenerates
+      # without a clean instead of keeping the other section's keys. swiftbuild is
+      # named explicitly because it only became the default in Swift 6.4.
+      - name: Build-environment values reach the tool and a TIGHTLIP_ENV flip regenerates
+        env:
+          TIGHTLIP_FIXTURE_STAGING: staging-value
+          TIGHTLIP_FIXTURE_PRODUCTION: production-value
+        run: |
+          cd Fixtures/DemoApp
+          build() { swift build --build-system swiftbuild --product SectionedDemo "$@"; }
+          TIGHTLIP_ENV=staging build
+          bin="$(build --show-bin-path)"
+          test "$("$bin/SectionedDemo")" = "staging-value"
+          TIGHTLIP_ENV=production build
+          test "$("$bin/SectionedDemo")" = "production-value"
 
   # Build for iOS Simulator to guard against the plugin tool regressing to macOS-only
   # APIs. Xcode compiles a build-tool plugin's executable (and its source dependencies)
