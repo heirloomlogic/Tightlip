@@ -12,7 +12,7 @@ struct Lipservice: BuildToolPlugin {
                 configURL: sourceTarget.directoryURL.appending(path: "Secrets.yml"),
                 workDirectory: context.pluginWorkDirectoryURL,
                 displayName: target.name,
-                resources: resourceURLs(sourceTarget.sourceFiles)
+                resources: resourcePaths(sourceTarget.sourceFiles)
             )
         ]
     }
@@ -33,7 +33,7 @@ extension Lipservice: XcodeBuildToolPlugin {
                 configURL: configURL,
                 workDirectory: context.pluginWorkDirectoryURL,
                 displayName: target.displayName,
-                resources: resourceURLs(target.inputFiles)
+                resources: resourcePaths(target.inputFiles)
             )
         ]
     }
@@ -45,7 +45,7 @@ private func makeCommand(
     configURL: URL,
     workDirectory: URL,
     displayName: String,
-    resources: Set<URL>
+    resources: [String]
 ) -> Command {
     let outputURL = workDirectory.appending(path: "Tightlip.swift")
     var arguments = [configURL.path(percentEncoded: false), outputURL.path(percentEncoded: false)]
@@ -58,18 +58,6 @@ private func makeCommand(
     if isRegularFile(configURL) {
         inputFiles.append(configURL)
     }
-    let configText = try? String(contentsOf: configURL, encoding: .utf8)
-    if let configText, let envFile = envFileInput(configText: configText, configURL: configURL) {
-        inputFiles.append(envFile)
-        if isBundled(envFile, resources: resources) {
-            Diagnostics.error(
-                "\(envFile.lastPathComponent) is copied into the \(displayName) bundle as a resource, "
-                    + "which would ship its plaintext secrets. Remove it from the target "
-                    + "(File inspector → Target Membership) or move it outside the target's folder.",
-                file: envFile.path(percentEncoded: false)
-            )
-        }
-    }
     if isBundled(configURL.standardizedFileURL, resources: resources) {
         Diagnostics.warning(
             "Secrets.yml is copied into the \(displayName) bundle as a resource, exposing the "
@@ -78,9 +66,21 @@ private func makeCommand(
             file: configURL.path(percentEncoded: false)
         )
     }
-    if let configText {
+    if let configText = try? String(contentsOf: configURL, encoding: .utf8) {
+        let configLines = configText.components(separatedBy: "\n")
+        if let envFile = envFileInput(configLines: configLines, configURL: configURL) {
+            inputFiles.append(envFile)
+            if isBundled(envFile, resources: resources) {
+                Diagnostics.error(
+                    "\(envFile.lastPathComponent) is copied into the \(displayName) bundle as a resource, "
+                        + "which would ship its plaintext secrets. Remove it from the target "
+                        + "(File inspector → Target Membership) or move it outside the target's folder.",
+                    file: envFile.path(percentEncoded: false)
+                )
+            }
+        }
         let forwardedURL = workDirectory.appending(path: "forwarded-environment")
-        if writeForwardedEnvironment(configText: configText, to: forwardedURL) {
+        if writeForwardedEnvironment(configLines: configLines, to: forwardedURL) {
             arguments.append(forwardedURL.path(percentEncoded: false))
             inputFiles.append(forwardedURL)
         }
@@ -103,9 +103,9 @@ private func makeCommand(
 /// fail-open: if this scan ever disagrees with the real parser, the worst case is
 /// input tracking as stale as it was before this existed — the tool remains the sole
 /// source of truth for build output.
-private func envFileInput(configText: String, configURL: URL) -> URL? {
+private func envFileInput(configLines: [String], configURL: URL) -> URL? {
     var declared: String?
-    for rawLine in configText.components(separatedBy: "\n") {
+    for rawLine in configLines {
         let line = rawLine.hasSuffix("\r") ? String(rawLine.dropLast()) : rawLine
         let stripped = line.trimmingCharacters(in: .whitespaces)
         if stripped.isEmpty || stripped.hasPrefix("#") { continue }
@@ -154,10 +154,10 @@ private func envFileInput(configText: String, configURL: URL) -> URL? {
 ///
 /// Returns whether the file is in place. On any failure, the tool falls back to its own
 /// environment — exactly the behavior before forwarding existed.
-private func writeForwardedEnvironment(configText: String, to url: URL) -> Bool {
+private func writeForwardedEnvironment(configLines: [String], to url: URL) -> Bool {
     let environment = ProcessInfo.processInfo.environment
     var entries = Data()
-    for name in forwardedNames(configText: configText).sorted() {
+    for name in forwardedNames(configLines: configLines).sorted() {
         guard let value = environment[name] else { continue }
         entries.append(Data("\(name)=\(value)".utf8))
         entries.append(0)
@@ -196,9 +196,9 @@ private func writeForwardedEnvironment(configText: String, to url: URL) -> Bool 
 /// Every identifier on the right of a `name: VALUE` line, in any section, plus
 /// `TIGHTLIP_ENV`. Deliberately looser than the real grammar: an extra name only costs
 /// an unused entry, and the tool rejects malformed configs anyway.
-private func forwardedNames(configText: String) -> Set<String> {
+private func forwardedNames(configLines: [String]) -> Set<String> {
     var names: Set<String> = ["TIGHTLIP_ENV"]
-    for rawLine in configText.components(separatedBy: "\n") {
+    for rawLine in configLines {
         let stripped = rawLine.trimmingCharacters(in: .whitespacesAndNewlines)
         if stripped.hasPrefix("#") { continue }
         guard let colon = stripped.firstIndex(of: ":") else { continue }
@@ -218,21 +218,21 @@ private func isIdentifier(_ s: String) -> Bool {
 /// Files the target copies into its product as resources. Xcode's synchronized folders
 /// (the default for new targets) do this to every non-source file in the folder —
 /// including `Secrets.yml` and a project-local env file.
-private func resourceURLs(_ files: FileList) -> Set<URL> {
-    Set(files.filter { $0.type == .resource }.map(\.url.standardizedFileURL))
+private func resourcePaths(_ files: FileList) -> [String] {
+    files.filter { $0.type == .resource }.map { $0.url.standardizedFileURL.path(percentEncoded: false) }
 }
 
 /// Whether `file` is a resource itself or sits inside a directory resource (a SwiftPM
 /// `.copy("Config")`, an Xcode folder reference).
-private func isBundled(_ file: URL, resources: Set<URL>) -> Bool {
+private func isBundled(_ file: URL, resources: [String]) -> Bool {
     let path = file.path(percentEncoded: false)
-    return resources.contains { resource in
-        let resourcePath = resource.path(percentEncoded: false)
-        return path == resourcePath || path.hasPrefix(resourcePath.hasSuffix("/") ? resourcePath : resourcePath + "/")
+    return resources.contains { resourcePath in
+        path == resourcePath || path.hasPrefix(resourcePath.hasSuffix("/") ? resourcePath : resourcePath + "/")
     }
 }
 
 private func isRegularFile(_ url: URL) -> Bool {
     var isDirectory: ObjCBool = false
-    return FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory) && !isDirectory.boolValue
+    let exists = FileManager.default.fileExists(atPath: url.path(percentEncoded: false), isDirectory: &isDirectory)
+    return exists && !isDirectory.boolValue
 }

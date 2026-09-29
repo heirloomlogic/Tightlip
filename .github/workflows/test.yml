@@ -77,6 +77,17 @@ jobs:
           swift build --product DemoApp
           test "$(./.build/debug/DemoApp)" = "updated-value"
 
+  # A separate job because swiftbuild keeps its own build tree: in the job above it
+  # would rebuild the tool and TightlipCore serially after the native steps.
+  test-fixture-swiftbuild:
+    runs-on: macos-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
       # SectionedDemo's values exist only in the job's environment. SwiftPM's
       # swiftbuild backend runs build commands in a synthesized environment, so this
       # proves the plugin forwards them — and that flipping TIGHTLIP_ENV regenerates

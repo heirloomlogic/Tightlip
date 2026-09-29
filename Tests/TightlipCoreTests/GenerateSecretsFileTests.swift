@@ -203,19 +203,8 @@ struct GenerateSecretsFileTests {
         }
 
         /// Decodes one property from the generated file with the salt it embeds.
-        func decoded(_ property: String) throws -> String? {
-            let source = try output()
-            guard
-                let saltLine = source.split(separator: "\n").first(where: { $0.contains("static let salt:") }),
-                let range = source.range(of: "static let \(property): Swift.String = Self.decode(\"")
-            else { return nil }
-            let salt = saltLine.components(separatedBy: "0x").dropFirst().compactMap { UInt8($0.prefix(2), radix: 16) }
-            let rest = source[range.upperBound...]
-            guard let end = rest.firstIndex(of: "\""), let data = Data(base64Encoded: String(rest[..<end])) else {
-                return nil
-            }
-            let bytes = data.enumerated().map { $0.element ^ salt[$0.offset % salt.count] }
-            return String(decoding: bytes, as: UTF8.self)
+        func decoded(_ property: String) throws -> String {
+            try decodeGeneratedProperty(output(), propertyName: property)
         }
     }
 }

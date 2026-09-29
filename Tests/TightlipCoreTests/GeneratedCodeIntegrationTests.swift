@@ -35,33 +35,20 @@ struct GeneratedCodeIntegrationTests {
 
         // Compile the generated file together with a driver that prints each
         // value base64-encoded (newline-safe), then run it.
-        let tmp = FileManager.default.temporaryDirectory.appendingPathComponent(
-            "tightlip-integration-\(UUID().uuidString)")
-        try FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: tmp) }
-
-        let driver = expected.map {
+        let prints = expected.map {
             "print(Data(Secrets.\($0.name).utf8).base64EncodedString())"
         }.joined(separator: "\n")
-        try generated.write(
-            to: tmp.appendingPathComponent("Tightlip.swift"), atomically: true, encoding: .utf8)
-        try "import Foundation\n\(driver)\n".write(
-            to: tmp.appendingPathComponent("main.swift"), atomically: true, encoding: .utf8)
-
-        let binary = tmp.appendingPathComponent("app")
-        let compile = try run(
-            "/usr/bin/xcrun",
-            ["swiftc", "Tightlip.swift", "main.swift", "-o", binary.path],
-            cwd: tmp
-        )
-        #expect(compile.status == 0, "swiftc failed:\n\(compile.output)")
-        guard compile.status == 0 else { return }
-
-        let execute = try run(binary.path, [], cwd: tmp)
-        #expect(execute.status == 0)
-        let printed = execute.output
-            .split(separator: "\n", omittingEmptySubsequences: false)
-            .map(String.init)
+        let driver = """
+            import Foundation
+            @main struct Driver {
+                static func main() {
+            \(prints)
+                }
+            }
+            """
+        let output = try compileAndRun(generated: generated, driver: driver, flags: ["-parse-as-library"])
+        guard let output else { return }
+        let printed = output.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
         let decoded = printed.prefix(expected.count).map { line in
             Data(base64Encoded: line).map { String(decoding: $0, as: UTF8.self) } ?? "<bad base64>"
         }
@@ -112,7 +99,7 @@ struct GeneratedCodeIntegrationTests {
             }
             """
         let output = try compileAndRun(generated: generated, driver: driver, flags: flags + ["-parse-as-library"])
-        #expect(output == names.map { "v-\($0)" }.joined(separator: ","))
+        #expect(output == names.map { "v-\($0)" }.joined(separator: ",") + "\n")
     }
 
     // MARK: helpers
@@ -135,7 +122,7 @@ struct GeneratedCodeIntegrationTests {
         guard compile.status == 0 else { return nil }
         let execute = try run(binary.path, [], cwd: tmp)
         #expect(execute.status == 0)
-        return execute.output.trimmingCharacters(in: .newlines)
+        return execute.output
     }
 
     private func run(

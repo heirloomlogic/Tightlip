@@ -71,10 +71,7 @@ public enum ConfigError: Error, Equatable, Sendable {
     public var message: String {
         switch self {
         case .parse(let path, let line, let reason):
-            if let line {
-                return "\(path):\(line): \(reason)"
-            }
-            return "\(path): \(reason)"
+            return "\(Self.location(path: path, line: line)): \(reason)"
         case .missingEnvironmentVariable(let envVar, let property):
             // One line per variable so each renders as its own issue in Xcode; the
             // tool prints the "set it in your shell / ~/.zshenv / CI" guidance once.
@@ -96,13 +93,14 @@ public enum ConfigError: Error, Equatable, Sendable {
     public var diagnostic: String {
         switch self {
         case .parse(let path, let line, let reason):
-            if let line {
-                return "\(path):\(line): error: \(reason)"
-            }
-            return "\(path): error: \(reason)"
+            return "\(Self.location(path: path, line: line)): error: \(reason)"
         case .missingEnvironmentVariable, .indeterminateEnvironment:
             return "error: \(message)"
         }
+    }
+
+    private static func location(path: String, line: Int?) -> String {
+        line.map { "\(path):\($0)" } ?? path
     }
 }
 
@@ -260,13 +258,10 @@ private func invisibleCharacterReason(in line: String) -> String? {
     for (offset, character) in line.enumerated() where character != " " && character != "\t" {
         for scalar in character.unicodeScalars {
             let properties = scalar.properties
-            let isInvisible: Bool
-            switch properties.generalCategory {
-            case .control, .format, .lineSeparator, .paragraphSeparator, .spaceSeparator:
-                isInvisible = true
-            default:
-                isInvisible = properties.isWhitespace
-            }
+            let isInvisible =
+                properties.isWhitespace
+                || [.control, .format, .lineSeparator, .paragraphSeparator, .spaceSeparator]
+                    .contains(properties.generalCategory)
             guard isInvisible else { continue }
 
             if scalar == "\r" {
@@ -783,8 +778,7 @@ public struct CapturedEnvironment: Equatable, Sendable {
     /// build environment overriding it is the desired outcome.
     public let overriddenKeys: Set<String>
 
-    /// Creates a captured environment.
-    public init(merged: [String: String], overriddenKeys: Set<String> = []) {
+    init(merged: [String: String], overriddenKeys: Set<String> = []) {
         self.merged = merged
         self.overriddenKeys = overriddenKeys
     }
@@ -810,13 +804,13 @@ public struct CapturedEnvironment: Equatable, Sendable {
 ///   - processEnvironment: The build's environment: the subshell's starting environment
 ///     and the per-key override.
 ///   - timeout: Max seconds to wait for the subshell. Defaults to 5.
-///   - onNote: Receives diagnostic notes. Defaults to writing `note: …` lines to stderr.
+///   - onNote: Receives diagnostic notes, without a `note:` prefix. Defaults to discarding them.
 /// - Returns: The merged environment and the keys whose file-assigned value was overridden.
 public func captureShellEnvironment(
     envFile: URL,
     processEnvironment: [String: String],
     timeout: TimeInterval = 5,
-    onNote: ((String) -> Void)? = nil
+    onNote: (String) -> Void = { _ in }
 ) -> CapturedEnvironment {
     #if os(macOS)
     var isDirectory: ObjCBool = false
@@ -937,7 +931,7 @@ public func captureShellEnvironment(
     }
 
     var sourced = parseEnvironmentEntries(outputData) { key in
-        emitNote("\(key) exported by \(envFile.path) is not valid UTF-8 and was ignored", onNote: onNote)
+        onNote("\(key) exported by \(envFile.path) is not valid UTF-8 and was ignored")
     }
 
     guard let sourceStatus = sourced[sourceStatusSentinel] else {
@@ -955,10 +949,9 @@ public func captureShellEnvironment(
     if sourceStatus != "0" {
         // Note-only, not fallback: exports above the failing line are valid, and a
         // file whose last statement is a false conditional also reports non-zero.
-        emitNote(
+        onNote(
             "sourcing \(envFile.path) reported exit status \(sourceStatus); "
-                + "the captured environment may be partial",
-            onNote: onNote
+                + "the captured environment may be partial"
         )
     }
 
@@ -1001,20 +994,12 @@ private func parseEnvironmentEntries(
 }
 
 #if os(macOS)
-private func emitNote(_ message: String, onNote: ((String) -> Void)?) {
-    if let onNote {
-        onNote(message)
-    } else {
-        FileHandle.standardError.write(Data("note: \(message)\n".utf8))
-    }
-}
-
 private func fallbackToProcessEnvironment(
     reason: String,
     processEnvironment: [String: String],
-    onNote: ((String) -> Void)?
+    onNote: (String) -> Void
 ) -> CapturedEnvironment {
-    emitNote("\(reason); using the build environment only", onNote: onNote)
+    onNote("\(reason); using the build environment only")
     return CapturedEnvironment(merged: processEnvironment)
 }
 
@@ -1079,7 +1064,8 @@ public func generateSecretsFile(
     } catch let error as CocoaError
         where error.code == .fileReadInapplicableStringEncoding || error.code == .fileReadCorruptFile
     {
-        emit("\(configPath): error: config is not valid UTF-8; save it with UTF-8 encoding")
+        let reason = "config is not valid UTF-8; save it with UTF-8 encoding"
+        emit(ConfigError.parse(path: configPath, line: nil, reason: reason).diagnostic)
         return false
     } catch {
         emit("error: failed to read \(configPath): \(error.localizedDescription)")
@@ -1117,26 +1103,12 @@ public func generateSecretsFile(
     if configFile.envFile != nil, !FileManager.default.fileExists(atPath: envFileURL.path) {
         emit("note: declared envFile not found at \(envFileURL.path); using the build environment only")
     }
-    var captureNotes: [String] = []
     let captured = captureShellEnvironment(
         envFile: envFileURL,
         processEnvironment: buildEnvironment,
-        onNote: { captureNotes.append($0) }
+        onNote: { emit("note: \($0)") }
     )
-    for note in captureNotes {
-        emit("note: \(note)")
-    }
     let environment = captured.merged
-
-    // Never print either value — only that the file's copy lost.
-    func warnIfOverridden(_ key: String) {
-        guard captured.overriddenKeys.contains(key) else { return }
-        emit(
-            "warning: \(key) from the build environment overrides the different value "
-                + "\(envFileURL.path) exports; if the file is current, restart the terminal "
-                + "or Xcode session that launched this build"
-        )
-    }
 
     let secrets: [ParsedSecret]
     var envName: String?
@@ -1149,18 +1121,18 @@ public func generateSecretsFile(
         if captured.overriddenKeys.contains("TIGHTLIP_ENV") {
             emit("note: TIGHTLIP_ENV from the build environment overrides the value \(envFileURL.path) exports")
         }
-        let resolved: String
+        let sectionName: String
         do {
-            resolved = try resolveEnvironment(sections: sections, environment: environment)
+            sectionName = try resolveEnvironment(sections: sections, environment: environment)
         } catch {
             emit(error.diagnostic)
             return false
         }
-        guard let section = sections.first(where: { $0.name == resolved }) else {
-            emit("error: internal error: resolved environment '\(resolved)' not found in sections")
+        guard let section = sections.first(where: { $0.name == sectionName }) else {
+            emit("error: internal error: resolved environment '\(sectionName)' not found in sections")
             return false
         }
-        envName = resolved
+        envName = sectionName
         secrets = section.secrets
     }
 
@@ -1178,7 +1150,14 @@ public func generateSecretsFile(
     for secret in secrets {
         do {
             let entry = try resolveSecret(secret, environment: environment)
-            warnIfOverridden(secret.envVar)
+            if captured.overriddenKeys.contains(secret.envVar) {
+                // Never print either value — only that the file's copy lost.
+                emit(
+                    "warning: \(secret.envVar) from the build environment overrides the different value "
+                        + "\(envFileURL.path) exports; if the file is current, restart the terminal "
+                        + "or Xcode session that launched this build"
+                )
+            }
             if entry.value.isEmpty {
                 // A warning, not a note: inside the build sandbox a `$(security …)` or
                 // `$(op read …)` export fails with status 0 and yields "", and a note is
@@ -1197,13 +1176,13 @@ public func generateSecretsFile(
         return false
     }
 
-    let output = renderSecretsEnum(resolved, environment: envName)
+    let output = Data(renderSecretsEnum(resolved, environment: envName).utf8)
     let outputURL = URL(fileURLWithPath: outputPath)
-    if let existing = try? Data(contentsOf: outputURL), existing == Data(output.utf8) {
+    if let existing = try? Data(contentsOf: outputURL), existing == output {
         return true
     }
     do {
-        try output.write(to: outputURL, atomically: true, encoding: .utf8)
+        try output.write(to: outputURL, options: .atomic)
     } catch {
         emit("error: failed to write \(outputPath): \(error.localizedDescription)")
         return false

@@ -5,10 +5,9 @@ import TightlipCore
 struct LipserviceTool {
     static func main() {
         let args = CommandLine.arguments
+        let emit: (String) -> Void = { FileHandle.standardError.write(Data("\($0)\n".utf8)) }
         guard args.count == 3 || args.count == 4 else {
-            FileHandle.standardError.write(
-                Data("error: usage: LipserviceTool <config.yml> <output.swift> [<forwarded-env>]\n".utf8)
-            )
+            emit("error: usage: LipserviceTool <config.yml> <output.swift> [<forwarded-env>]")
             exit(1)
         }
         let succeeded = generateSecretsFile(
@@ -17,7 +16,7 @@ struct LipserviceTool {
             forwardedEnvironmentPath: args.count == 4 ? args[3] : nil,
             processEnvironment: ProcessInfo.processInfo.environment,
             homeDirectory: URL(fileURLWithPath: NSHomeDirectory()),
-            emit: { FileHandle.standardError.write(Data("\($0)\n".utf8)) }
+            emit: emit
         )
         exit(succeeded ? 0 : 1)
     }
