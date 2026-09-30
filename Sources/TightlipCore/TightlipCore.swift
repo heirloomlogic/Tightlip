@@ -137,7 +137,7 @@ public enum ConfigError: Error, Equatable, Sendable {
 
 /// Parses a Tightlip YAML config, returning either a flat or sectioned result.
 ///
-/// The format is auto-detected from the first meaningful line:
+/// The format is auto-detected from the first meaningful line after the header directives:
 /// - If it matches `identifier:` with no value, the file is **sectioned** (environments).
 /// - Otherwise, it's the classic **flat** format.
 ///
@@ -262,10 +262,15 @@ private func extractHeaderDirectives(
             envFile = value
         case .access:
             guard let level = AccessLevel(rawValue: value) else {
+                // `access: NAME` also reads as a pre-2.0 mapping for a secret named `access`.
+                let hint =
+                    parseEnvVarReference(value[...]) != nil
+                    ? "; for a secret named 'access', note that 'access' is reserved as a directive; rename the secret"
+                    : ""
                 throw .parse(
                     path: path,
                     line: lineNumber,
-                    reason: "access must be internal, package, or public; got '\(value)'"
+                    reason: "access must be internal, package, or public; got '\(value)'\(hint)"
                 )
             }
             access = level

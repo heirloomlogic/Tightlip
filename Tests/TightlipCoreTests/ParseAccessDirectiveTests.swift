@@ -35,6 +35,28 @@ struct ParseAccessDirectiveTests {
         )
     }
 
+    @Test(arguments: ["ACCESS_TOKEN", "ACCESS_TOKEN?", "private"])
+    func identifierValueExplainsThatAccessIsReserved(value: String) {
+        // A pre-2.0 config may open with a secret named `access`; `access: ACCESS_TOKEN`
+        // reads as a mapping, so the error says the name is reserved and needs renaming.
+        expectParseError(
+            "access: \(value)\nfoo: BAR",
+            line: 1,
+            reasonContains: "'access' is reserved as a directive; rename the secret"
+        )
+    }
+
+    @Test(arguments: ["public # shared", "~/x", "a b"])
+    func nonIdentifierValueKeepsThePlainError(value: String) {
+        do {
+            _ = try parseYAMLConfigFile("access: \(value)\nfoo: BAR", path: "t.yml")
+            Issue.record("expected ConfigError.parse")
+        } catch {
+            #expect(error.message.contains("access must be internal, package, or public"))
+            #expect(!error.message.contains("rename the secret"), "message was: \(error.message)")
+        }
+    }
+
     @Test func emptyValueIsParseError() {
         expectParseError("access:\nfoo: BAR", line: 1, reasonContains: "access directive has no value")
     }

@@ -54,7 +54,7 @@ gh skill install heirloomlogic/skills tightlip-ref --agent codex --force --scope
 
 ## Usage
 
-Tightlip reads a single config file, `Secrets.yml`, in one of two formats. The format is auto-detected from the first non-comment line.
+Tightlip reads a single config file, `Secrets.yml`, in one of two formats. The format is auto-detected from the first non-comment line after any header directives.
 
 ### Flat config
 
