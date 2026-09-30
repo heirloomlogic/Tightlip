@@ -259,6 +259,78 @@ struct CheckSecretsConfigTests {
         #expect(Array(result.lines.dropFirst().prefix(build.lines.count)) == build.lines)
     }
 
+    // MARK: the environment a build tool sees
+
+    /// Under `swiftbuild`, the tool runs in a synthesized environment that keeps `HOME`
+    /// and `PATH`, plus what the Lipservice plugin forwards: every variable the config
+    /// names, in any section, and `TIGHTLIP_ENV`. The env file is sourced from that, so
+    /// it reads an undeclared variable as "".
+    @Test func envFileSeesOnlyWhatABuildToolGets() throws {
+        let run = try ScratchTarget(
+            config: """
+                envFile: ./secrets.env
+                staging:
+                  otherSection: TIGHTLIP_CHECK_A
+                  home: TIGHTLIP_CHECK_B
+                  path: TIGHTLIP_CHECK_C
+                  configuration: TIGHTLIP_CHECK_D
+                  tightlipEnv: TIGHTLIP_CHECK_E
+                  undeclared: TIGHTLIP_CHECK_F
+                production:
+                  otherSection: TIGHTLIP_CHECK_PRODUCTION
+                  home: TIGHTLIP_CHECK_B
+                  path: TIGHTLIP_CHECK_C
+                  configuration: TIGHTLIP_CHECK_D
+                  tightlipEnv: TIGHTLIP_CHECK_E
+                  undeclared: TIGHTLIP_CHECK_F
+                """,
+            envFile: """
+                export TIGHTLIP_CHECK_A="$TIGHTLIP_CHECK_PRODUCTION"
+                export TIGHTLIP_CHECK_B="$HOME"
+                export TIGHTLIP_CHECK_C="$PATH"
+                export TIGHTLIP_CHECK_D="$CONFIGURATION"
+                export TIGHTLIP_CHECK_E="$TIGHTLIP_ENV"
+                export TIGHTLIP_CHECK_F="$TIGHTLIP_CHECK_UNDECLARED"
+
+                """
+        )
+        let launch = [
+            "TIGHTLIP_ENV": "staging",
+            "TIGHTLIP_CHECK_PRODUCTION": "v",
+            "HOME": run.home.path,
+            "PATH": "/usr/bin:/bin",
+            "CONFIGURATION": "Debug",
+            "TIGHTLIP_CHECK_UNDECLARED": "v",
+        ]
+
+        let result = run.check(processEnvironment: launch)
+        #expect(!result.succeeded)
+        for line in [
+            "  TIGHTLIP_CHECK_A (Secrets.otherSection): set, from the env file",
+            "  TIGHTLIP_CHECK_B (Secrets.home): set, from the env file",
+            "  TIGHTLIP_CHECK_C (Secrets.path): set, from the env file",
+            "  TIGHTLIP_CHECK_D (Secrets.configuration): set, from the env file",
+            "  TIGHTLIP_CHECK_E (Secrets.tightlipEnv): set, from the env file",
+            "  TIGHTLIP_CHECK_F (Secrets.undeclared): set but empty, from the env file",
+            "result: a build would fail",
+        ] {
+            #expect(result.lines.contains(line), "missing \(line) in \(result.lines)")
+        }
+
+        // A swiftbuild build of the same config: the plugin forwards the declared names
+        // and TIGHTLIP_ENV, and the synthesized environment supplies the rest.
+        try run.forward(
+            launch.filter { ["TIGHTLIP_ENV", "TIGHTLIP_CHECK_PRODUCTION"].contains($0.key) })
+        let build = run.generate(processEnvironment: [
+            "HOME": run.home.path, "PATH": "/usr/bin:/bin", "CONFIGURATION": "Debug",
+        ])
+        #expect(!build.succeeded)
+        #expect(
+            build.errors == [
+                "error: environment variable TIGHTLIP_CHECK_F is set but empty; Secrets.undeclared needs a value"
+            ])
+    }
+
     // MARK: helpers
 
     private struct Row: Equatable, CustomStringConvertible {

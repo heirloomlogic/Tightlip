@@ -1253,6 +1253,28 @@ public func evaluateSecretsConfig(
     homeDirectory: URL,
     emit: (String) -> Void
 ) -> SecretsEvaluation? {
+    evaluate(
+        configPath: configPath,
+        forwardedEnvironmentPath: forwardedEnvironmentPath,
+        processEnvironment: processEnvironment,
+        homeDirectory: homeDirectory,
+        emit: emit,
+        keeping: nil
+    )
+}
+
+/// The body of
+/// ``evaluateSecretsConfig(configPath:forwardedEnvironmentPath:processEnvironment:homeDirectory:emit:)``.
+/// `keeping`, given the parsed config, returns the names to keep from the forwarded and
+/// process environments before the env file is sourced; nil keeps them all.
+private func evaluate(
+    configPath: String,
+    forwardedEnvironmentPath: String?,
+    processEnvironment: [String: String],
+    homeDirectory: URL,
+    emit: (String) -> Void,
+    keeping: ((ParsedConfigFile) -> Set<String>)?
+) -> SecretsEvaluation? {
     let configURL = URL(fileURLWithPath: configPath)
     let configText: String
     do {
@@ -1294,6 +1316,9 @@ public func evaluateSecretsConfig(
         }
     }
     buildEnvironment.merge(processEnvironment) { _, process in process }
+    if let keep = keeping?(configFile) {
+        buildEnvironment = buildEnvironment.filter { keep.contains($0.key) }
+    }
 
     let envFileURL = resolveEnvFilePath(
         configFile.envFile ?? TightlipDefaults.envFilePath,
@@ -1479,8 +1504,9 @@ public func generateSecretsFile(
 /// - Parameters:
 ///   - configPath: Path to `Secrets.yml`.
 ///   - displayName: The target's name, for the report's first line.
-///   - processEnvironment: The environment to check against, as a build launched from
-///     it would see it.
+///   - processEnvironment: The environment the check was launched in. Only the part a
+///     `swiftbuild` build launched from it would hand the build tool is used (see
+///     `buildToolNames`), and the env file is sourced from that part alone.
 ///   - homeDirectory: Directory a leading `~/` in the env file path expands to.
 ///   - emit: Receives each output line.
 /// - Returns: `false` exactly when a build would fail at the Lipservice step.
@@ -1492,12 +1518,13 @@ public func checkSecretsConfig(
     emit: (String) -> Void
 ) -> Bool {
     emit("Checking \(displayName) (\(configPath))")
-    let evaluation = evaluateSecretsConfig(
+    let evaluation = evaluate(
         configPath: configPath,
         forwardedEnvironmentPath: nil,
         processEnvironment: processEnvironment,
         homeDirectory: homeDirectory,
-        emit: emit
+        emit: emit,
+        keeping: buildToolNames
     )
     if let evaluation {
         emit("environment: \(describe(evaluation.selection))")
@@ -1513,6 +1540,28 @@ public func checkSecretsConfig(
     let succeeded = evaluation?.succeeded ?? false
     emit("result: a build would \(succeeded ? "succeed" : "fail")")
     return succeeded
+}
+
+/// The variables a `swiftbuild` build passes from the environment it was launched in to
+/// the build tool.
+///
+/// SwiftPM's `swiftbuild` backend, the default since Swift 6.4, runs the tool in a
+/// synthesized environment that keeps `HOME` and `PATH` but drops the caller's other
+/// variables. The Lipservice plugin forwards the rest of what the tool needs: every
+/// variable the config names, in any section, plus `TIGHTLIP_ENV`. `CONFIGURATION`
+/// stands in for the build setting of that name, which the synthesized environment sets
+/// from `-c`; with no build to read it from, the check takes it from the caller.
+///
+/// The native backend passes the caller's whole environment, so an env file that reads a
+/// variable outside this set can pass there and still fail under `swiftbuild`. The check
+/// follows the stricter backend.
+private func buildToolNames(_ config: ParsedConfigFile) -> Set<String> {
+    let declared: [ParsedSecret]
+    switch config.secrets {
+    case .flat(let secrets): declared = secrets
+    case .sectioned(let sections): declared = sections.flatMap(\.secrets)
+    }
+    return Set(declared.map(\.envVar)).union(["TIGHTLIP_ENV", "CONFIGURATION", "HOME", "PATH"])
 }
 
 private func describe(_ selection: SecretsEvaluation.Selection) -> String {

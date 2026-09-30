@@ -244,7 +244,7 @@ variables:
 result: a build would fail
 ```
 
-Above the report it prints the diagnostics a build would, including `path:line: error:` parse errors. Each variable is `set`, `set but empty (allowed)`, `set but empty`, or `missing`, and names whether its value came from the env file or the environment. Values are never printed. The command exits non-zero when a build would fail at the Lipservice step, so a CI job can run it before the build. It checks the environment of the shell that runs it, which may differ from Xcode.app's. In an Xcode project, run it from the Project navigator's context menu. See [Checking a config](https://heirloomlogic.github.io/Tightlip/documentation/tightlipcore/checkingconfig).
+Above the report it prints the diagnostics a build would, including `path:line: error:` parse errors. Each variable is `set`, `set but empty (allowed)`, `set but empty`, or `missing`, and names whether its value came from the env file or the environment. Values are never printed. The command exits non-zero when a build would fail at the Lipservice step, so a CI job can run it before the build. It uses the part of the shell's environment that a `swiftbuild` build passes to the tool: the variables `Secrets.yml` names, `TIGHTLIP_ENV`, `CONFIGURATION`, `HOME`, and `PATH`. An Xcode.app build may see a different environment. An Xcode project can run the command from the Project navigator's context menu, though that has not been tested in Xcode. See [Checking a config](https://heirloomlogic.github.io/Tightlip/documentation/tightlipcore/checkingconfig).
 
 ## Troubleshooting
 

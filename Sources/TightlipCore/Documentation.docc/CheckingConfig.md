@@ -49,11 +49,15 @@ When the section can't be determined, no variables are listed: the build stops b
 
 ## Exit status
 
-The command exits non-zero when a build would fail at the Lipservice step for any checked target, and zero otherwise. Two build failures are outside what it checks: the build plugin's error for an env file copied into the bundle as a resource (see <doc:Troubleshooting>), and anything after the generated file is written, such as a compile error.
+The command exits non-zero when a build would fail at the Lipservice step for any checked target, and zero otherwise. A failure after the generated file is written, such as a compile error, is outside what it checks.
+
+In a Swift package, SwiftPM runs the Lipservice build plugin while it prepares the command. The plugin's error for an env file copied into the bundle as a resource (see <doc:Troubleshooting>) therefore stops the command before any report prints, and it exits non-zero. Whether Xcode runs the build plugin before a command in a project has not been tested.
 
 ## Check the environment the build will see
 
-The check reads the environment of the shell that runs it, the same one `swift build` in that shell would use. Xcode.app builds use the environment Xcode was launched with, which usually lacks exports made in a terminal. A variable that reports `from the build environment` in a terminal may be missing in an Xcode build. Put it in the env file instead. See <doc:EnvironmentSourcing>.
+The check starts from the environment of the shell that runs it and keeps what SwiftPM's default `swiftbuild` backend passes to the build tool: the variables `Secrets.yml` names in any section, `TIGHTLIP_ENV`, `HOME`, and `PATH`. It also keeps `CONFIGURATION`, which a build sets from `-c`. The env file is sourced from that environment, as in a build, so a line like `export ACME_API_KEY="$CI_ACME_KEY"` reads an empty `CI_ACME_KEY` unless `Secrets.yml` names it. The deprecated native backend passes the whole shell environment, so a native build can find a value the check reports as empty or missing.
+
+Xcode.app builds use the environment Xcode was launched with, which usually lacks exports made in a terminal. A variable that reports `from the build environment` in a terminal may be missing in an Xcode build. Put it in the env file instead. See <doc:EnvironmentSourcing>.
 
 To check a release lane, set what the lane sets:
 
@@ -76,7 +80,7 @@ In CI, run it as a step before the build. It fails in seconds, and its report na
 
 `swift package` needs a `Package.swift`, so an Xcode project runs the command from Xcode instead: right-click the project in the Project navigator and choose it from the package plugin commands listed there. For each target, it checks `<TargetName>/Secrets.yml` beside the `.xcodeproj`, the same path the build plugin reads.
 
-In Xcode the check sees the environment Xcode was launched with, but not build settings. A `TIGHTLIP_ENV` set as a user-defined build setting, or the `CONFIGURATION` a build gets from its scheme, is unset during the check.
+Running the command inside an Xcode project has not been tested. The check most likely sees the environment Xcode was launched with and no build settings. If so, a `TIGHTLIP_ENV` set as a user-defined build setting, or the `CONFIGURATION` a build gets from its scheme, is unset during the check.
 
 ## See Also
 

@@ -56,12 +56,23 @@ private struct CheckError: Error, CustomStringConvertible {
 /// Checks every candidate that has a `Secrets.yml`, or exactly the ones `--target`
 /// names, and throws when a build would fail for any of them.
 private func check(_ candidates: [Candidate], arguments: [String], tool: URL, scope: String) throws {
+    let usage = "usage: swift package tightlip-check [--target <name>]..."
+    // ArgumentExtractor drops a trailing `--target` that has no value, which would
+    // silently widen the check to every target.
+    if arguments.last == "--target" {
+        throw CheckError(description: "--target needs a target name; \(usage)")
+    }
     var extractor = ArgumentExtractor(arguments)
-    let requested = extractor.extractOption(named: "target")
+    var requested: [String] = []
+    for name in extractor.extractOption(named: "target") where !requested.contains(name) {
+        guard !name.isEmpty else {
+            throw CheckError(description: "--target needs a target name; \(usage)")
+        }
+        requested.append(name)
+    }
     guard extractor.remainingArguments.isEmpty else {
         throw CheckError(
-            description: "unexpected argument(s) \(extractor.remainingArguments.joined(separator: " ")); "
-                + "usage: swift package tightlip-check [--target <name>]..."
+            description: "unexpected argument(s) \(extractor.remainingArguments.joined(separator: " ")); \(usage)"
         )
     }
 
@@ -86,6 +97,7 @@ private func check(_ candidates: [Candidate], arguments: [String], tool: URL, sc
     }
 
     var failed: [String] = []
+    var crashed: [String] = []
     for (index, target) in selected.enumerated() {
         if index > 0 {
             // Written directly: `print` buffers, and the tool writes to the same stdout.
@@ -96,11 +108,20 @@ private func check(_ candidates: [Candidate], arguments: [String], tool: URL, sc
         process.arguments = ["--check", target.name, target.config.path(percentEncoded: false)]
         try process.run()
         process.waitUntilExit()
-        if process.terminationStatus != 0 {
+        if process.terminationReason == .uncaughtSignal {
+            crashed.append("\(target.name) (signal \(process.terminationStatus))")
+        } else if process.terminationStatus != 0 {
             failed.append(target.name)
         }
     }
+    var problems: [String] = []
+    if !crashed.isEmpty {
+        problems.append("LipserviceTool crashed checking \(crashed.joined(separator: ", "))")
+    }
     if !failed.isEmpty {
-        throw CheckError(description: "a build would fail for \(failed.joined(separator: ", "))")
+        problems.append("a build would fail for \(failed.joined(separator: ", "))")
+    }
+    if !problems.isEmpty {
+        throw CheckError(description: problems.joined(separator: "; "))
     }
 }
