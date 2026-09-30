@@ -50,7 +50,7 @@ When the section can't be determined, no variables are listed: the build stops b
 
 ## Exit status
 
-The command exits non-zero when a build would fail at the Lipservice step for any checked target, and zero otherwise, with one exception: an env file that reads a build setting can fail the check and pass the build (see <doc:CheckingConfig#Env-files-that-read-build-settings>). A failure after the generated file is written, such as a compile error, is outside what it checks.
+The command exits non-zero when it finds that a build would fail at the Lipservice step for any checked target, and zero otherwise. A build can still disagree with it, in two ways. The environment can differ (see <doc:CheckingConfig#Check-the-environment-the-build-will-see>): `CONFIGURATION` is a stand-in, a native build passes the whole shell environment, and an Xcode.app build uses the environment Xcode was launched with. Or an env file can read a build setting, which fails the check and passes the build (see <doc:CheckingConfig#Env-files-that-read-build-settings>). A failure after the generated file is written, such as a compile error, is outside what it checks.
 
 In a Swift package, SwiftPM runs the Lipservice build plugin while it prepares the command. The plugin's error for an env file copied into the bundle as a resource (see <doc:Troubleshooting>) therefore stops the command before any report prints, and it exits non-zero. Whether Xcode runs the build plugin before a command in a project has not been tested.
 
@@ -93,7 +93,7 @@ A native SwiftPM build doesn't set `SRCROOT`, so the same line fails there unles
 export ACME_API_KEY="$(cat "${0:a:h}/secrets/acme-key")"
 ```
 
-That resolves in the check and in SwiftPM builds with either backend. If an env file has to read a build setting, the check can't verify that target; name the other targets with `--target` to check them.
+That resolves in the check and in SwiftPM builds with either backend. The plugin tracks the env file as a build input, not the files it reads, so editing `secrets/acme-key` alone leaves the previous value in the built product until something else, such as an edit to the env file, regenerates it. If an env file has to read a build setting, the check can't verify that target; name the other targets with `--target` to check them.
 
 ## Xcode projects
 

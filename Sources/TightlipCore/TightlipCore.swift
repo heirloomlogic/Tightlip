@@ -1509,7 +1509,11 @@ public func generateSecretsFile(
 ///     `buildToolNames`), and the env file is sourced from that part alone.
 ///   - homeDirectory: Directory a leading `~/` in the env file path expands to.
 ///   - emit: Receives each output line.
-/// - Returns: `false` exactly when a build would fail at the Lipservice step.
+/// - Returns: `false` when it finds that a build in the same environment would fail at the
+///   Lipservice step, and `true` otherwise. A build can still disagree: an env file that
+///   reads a build setting such as `SRCROOT` fails the check and passes a `swiftbuild`
+///   build, and `CONFIGURATION`, the native backend, and Xcode.app can each give a build
+///   an environment the check doesn't have. See the "Checking a Config Without Building" article.
 public func checkSecretsConfig(
     configPath: String,
     displayName: String,
