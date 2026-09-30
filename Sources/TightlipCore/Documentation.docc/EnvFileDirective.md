@@ -25,7 +25,7 @@ The path is taken literally, and the parser rejects forms that look like they'd 
 | Quotes, `$`, or backticks (`"./x.env"`, `$HOME/x.env`) | `envFile path must be written bare; quotes, '$', and backticks are not expanded` |
 | `~user/file` | `only a leading '~/' is expanded in an envFile path; '~user' paths are not supported` |
 
-The path also may not contain spaces or `#` (inline comments are not supported), and a bare identifier like `envFile: SOME_VAR` is rejected as ambiguous with a secret mapping — write `./SOME_VAR` for a genuinely relative path.
+The path also may not contain spaces or `#` (inline comments are not supported), and a bare identifier like `envFile: SOME_VAR` or `envFile: SOME_VAR?` is rejected as ambiguous with a secret mapping — write `./SOME_VAR` for a genuinely relative path.
 
 If the declared file doesn't exist at build time, the build proceeds on the build environment alone and a `note:` in the log points at the resolved path. A path that exists but is a directory or unreadable gets a `note:` and the same fallback.
 
