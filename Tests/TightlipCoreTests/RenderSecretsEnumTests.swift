@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 import TightlipCore
 
@@ -83,5 +84,37 @@ struct RenderSecretsEnumTests {
         let out = renderSecretsEnum([(name: "k", value: "v")])
         #expect(out.contains("fatalError("))
         #expect(!out.contains("return \"\""))
+    }
+}
+
+@Suite("renderSecretsEnum — access level")
+struct RenderSecretsEnumAccessTests {
+    static let secrets: [(name: String, value: String)] = [(name: "alpha", value: "a"), (name: "beta", value: "b")]
+
+    @Test func internalIsByteIdenticalToTheDefault() {
+        let explicit = renderSecretsEnum(Self.secrets, environment: "staging", access: .internal)
+        #expect(explicit == renderSecretsEnum(Self.secrets, environment: "staging"))
+        #expect(explicit.contains("\nnonisolated enum Secrets {\n"))
+        #expect(explicit.contains("\n    static let alpha: Swift.String"))
+        #expect(!explicit.contains("internal"))
+    }
+
+    @Test(arguments: [AccessLevel.package, .public])
+    func keywordLeadsTheEnumAndEveryProperty(access: AccessLevel) {
+        let out = renderSecretsEnum(Self.secrets, access: access)
+        let keyword = access.rawValue
+        #expect(out.contains("\n\(keyword) nonisolated enum Secrets {\n"))
+        #expect(out.contains("\n    \(keyword) static let alpha: Swift.String = Self.decode(\""))
+        #expect(out.contains("\n    \(keyword) static let beta: Swift.String = Self.decode(\""))
+        #expect(out.contains("\n    private static let salt: [Swift.UInt8]"))
+        #expect(out.contains("\n    private static func decode(_ encoded: Swift.String)"))
+    }
+
+    @Test(arguments: [AccessLevel.package, .public])
+    func onlyTheKeywordDiffersFromInternal(access: AccessLevel) {
+        // Same salt and payloads: the access level is not an input to obfuscation.
+        let widened = renderSecretsEnum(Self.secrets, access: access)
+        let stripped = widened.replacingOccurrences(of: "\(access.rawValue) ", with: "")
+        #expect(stripped == renderSecretsEnum(Self.secrets))
     }
 }

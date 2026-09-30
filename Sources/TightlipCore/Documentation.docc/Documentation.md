@@ -27,6 +27,7 @@ Tightlip reads a `Secrets.yml` config at the consuming target's source root, res
 
 - <doc:SectionedConfigs>
 - <doc:EnvFileDirective>
+- <doc:SharingAcrossModules>
 - <doc:ContinuousIntegration>
 - <doc:Troubleshooting>
 
@@ -46,3 +47,4 @@ Tightlip reads a `Secrets.yml` config at the consuming target's source root, res
 - ``ParsedSection``
 - ``ParsedConfig``
 - ``ParsedConfigFile``
+- ``AccessLevel``

@@ -6,7 +6,7 @@ Point Tightlip at a different shell-init file with the `envFile:` directive.
 
 By default the build tool sources `~/.zshenv` to pick up your shell-exported env vars. If your shell isn't zsh, or your env-var exports live elsewhere, declare an `envFile:` directive at the top of `Secrets.yml`.
 
-The directive must be the **first** non-blank, non-comment line. Anything after a section header or property mapping is parsed as a secret declaration and will fail.
+The directive must come before the first section header or property mapping. It may sit before or after an `access:` directive (<doc:SharingAcrossModules>). Anywhere later it is parsed as a secret declaration and fails.
 
 ## Syntax
 

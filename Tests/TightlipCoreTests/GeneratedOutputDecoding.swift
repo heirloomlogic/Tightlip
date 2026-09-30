@@ -2,7 +2,7 @@ import Foundation
 
 /// Extracts the base64 ciphertext for a property and decodes it using the salt embedded
 /// in the same generated output. Mirrors the runtime decode shim emitted by
-/// ``renderSecretsEnum(_:environment:)``.
+/// ``renderSecretsEnum(_:environment:access:)``.
 func decodeGeneratedProperty(_ out: String, propertyName: String) throws -> String {
     let salt = try parseSalt(from: out)
     let needle = "static let \(propertyName): Swift.String = Self.decode(\""

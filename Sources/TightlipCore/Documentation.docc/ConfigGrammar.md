@@ -13,19 +13,20 @@ Tightlip parses a small, strict subset of YAML. The parser rejects anything ambi
 - Property names may not be any of the following, which would render a non-compiling (or ambiguous) generated file; the parser rejects them with a line number instead:
   - Swift keywords (`class`, `default`, …; `open` is allowed) or the member names Swift rejects outright (`Type`, `Protocol`, `_`);
   - names the generated enum reserves for itself: `salt` and `decode`, used by its decode shim, and `Swift` and `Foundation`, the module names the shim qualifies library symbols with (`Swift.String`, `Foundation.Data`) so that neither a property nor a type of yours named `Data` or `UTF8` can shadow them;
-  - `envFile`, which is reserved for the directive.
+  - `envFile` and `access`, which are reserved for the directives.
 - `#` at the start of a line is a comment. Inline comments after a value are not supported — including after an `envFile:` path.
 - Blank lines are fine. Tabs are not — anywhere.
 - Invisible characters are rejected on every line that isn't blank or a comment: a no-break space, a zero-width space, any other format or control character, and a carriage return anywhere but the end of a line. Comments and blank lines may contain anything.
 - The file must be UTF-8.
 - Flat mode: no leading whitespace on mapping lines.
 - Sectioned mode: section headers at column 1, content at exactly 2-space indent.
+- The optional header directives, `envFile:` (<doc:EnvFileDirective>) and `access:` (<doc:SharingAcrossModules>), go at column 1 before the first section header or mapping. They may come in either order, and each may appear once. `access:` takes exactly `internal`, `package`, or `public`.
 - Every declared secret is required at build time. If an env var is unset, or set to the empty string without a `?` marker, the build fails with one `error:` per variable, all reported in the same build. `?` does not make a variable optional: unset is still an error. Values that may be absent altogether should be read from `ProcessInfo` at runtime rather than declared here.
 - Duplicate keys, empty files, and anything else outside this grammar are parse errors with a line number.
 
 ## Format Detection
 
-The parser auto-detects format from the first non-comment line:
+The parser auto-detects format from the first non-comment line after the header directives:
 
 - If it has the shape `key: value`, the file is **flat**.
 - If it has the shape `name:` (no value), the file is **sectioned**.
@@ -41,6 +42,8 @@ Parse errors print as `<path>:<line>: error: <reason>`, the form Xcode attribute
 /path/to/Secrets.yml:1: error: expected '<name>: <ENV_VAR>', got 'foo BAR'
 /path/to/Secrets.yml:3: error: duplicate key 'foo' (first defined on line 1)
 /path/to/Secrets.yml:2: error: 'class' is a Swift keyword and cannot be used as a secret name
+/path/to/Secrets.yml:1: error: access must be internal, package, or public; got 'public?'
+/path/to/Secrets.yml:3: error: duplicate envFile directive (first defined on line 1)
 /path/to/Secrets.yml:1: error: invisible character U+00A0 NO-BREAK SPACE at column 5; retype it as a plain space
 /path/to/Secrets.yml:1: error: invisible character U+200B ZERO WIDTH SPACE at column 9; delete it
 /path/to/Secrets.yml:2: error: stray carriage return (U+000D) at column 9; save the file with LF or CRLF line endings
@@ -63,3 +66,4 @@ The line number is omitted for whole-file errors like an empty config. Section-l
 
 - <doc:GettingStarted>
 - <doc:SectionedConfigs>
+- <doc:SharingAcrossModules>

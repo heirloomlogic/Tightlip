@@ -16,13 +16,16 @@ let package = Package(
         .package(name: "Tightlip", path: "../..")
     ],
     targets: [
-        .executableTarget(
-            name: "DemoApp",
+        // The secrets live in their own module, widened to `package` access, the way a
+        // modular app shares one secrets target between feature targets.
+        .target(
+            name: "DemoSecrets",
             // The env file is plugin input, not a source; excluding it silences
             // SwiftPM's "unhandled file" warning.
             exclude: ["secrets.env"],
             plugins: [.plugin(name: "Lipservice", package: "Tightlip")]
         ),
+        .executableTarget(name: "DemoApp", dependencies: ["DemoSecrets"]),
         .executableTarget(
             name: "SectionedDemo",
             plugins: [.plugin(name: "Lipservice", package: "Tightlip")]

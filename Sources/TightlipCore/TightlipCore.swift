@@ -46,7 +46,21 @@ public enum ParsedConfig: Equatable, Sendable {
     case sectioned([ParsedSection])
 }
 
-/// A parsed config plus the optional `envFile:` directive that may precede it.
+/// The access level of the generated `Secrets` enum and its properties, set by the
+/// `access:` directive.
+public enum AccessLevel: String, Equatable, Sendable {
+    /// Visible only inside the target that generates it. The default.
+    case `internal`
+
+    /// Visible to other targets in the same SwiftPM package.
+    case `package`
+
+    /// Visible to any module that imports the target.
+    case `public`
+}
+
+/// A parsed config plus the optional `envFile:` and `access:` directives that may
+/// precede it.
 public struct ParsedConfigFile: Equatable, Sendable {
     /// The secrets section of the config (flat or sectioned).
     public let secrets: ParsedConfig
@@ -55,10 +69,15 @@ public struct ParsedConfigFile: Equatable, Sendable {
     /// Tilde-expansion and relative-path resolution are the caller's responsibility.
     public let envFile: String?
 
+    /// The level declared by `access:` at the top of the YAML, or ``AccessLevel/internal``
+    /// if not declared.
+    public let access: AccessLevel
+
     /// Creates a parsed config file. Normally produced by ``parseYAMLConfigFile(_:path:)``.
-    public init(secrets: ParsedConfig, envFile: String? = nil) {
+    public init(secrets: ParsedConfig, envFile: String? = nil, access: AccessLevel = .internal) {
         self.secrets = secrets
         self.envFile = envFile
+        self.access = access
     }
 }
 
@@ -122,9 +141,9 @@ public enum ConfigError: Error, Equatable, Sendable {
 /// - If it matches `identifier:` with no value, the file is **sectioned** (environments).
 /// - Otherwise, it's the classic **flat** format.
 ///
-/// If the config begins with an `envFile:` directive, that directive is consumed silently
-/// and not reflected in the return value. Use ``parseYAMLConfigFile(_:path:)`` to obtain
-/// the directive alongside the parsed body.
+/// If the config begins with `envFile:` or `access:` directives, they are consumed
+/// silently and not reflected in the return value. Use ``parseYAMLConfigFile(_:path:)``
+/// to obtain the directives alongside the parsed body.
 ///
 /// - Parameters:
 ///   - text: Full config file contents.
@@ -135,16 +154,19 @@ public func parseYAMLConfig(_ text: String, path: String) throws(ConfigError) ->
     try parseYAMLConfigFile(text, path: path).secrets
 }
 
-/// Parses a Tightlip YAML config and any leading `envFile:` directive.
+/// Parses a Tightlip YAML config and any leading `envFile:` and `access:` directives.
 ///
-/// The `envFile:` directive, if present, must appear before any other non-blank/non-comment
-/// line. Its value is everything after `envFile:`, trimmed; it may contain path characters
-/// (`/`, `~`, `.`, `-`, etc.) that are not valid identifiers.
+/// The directives form the config's header: each may appear at most once, in either
+/// order, at column 1 before any section header or mapping. The `envFile:` value is
+/// everything after `envFile:`, trimmed; it may contain path characters (`/`, `~`, `.`,
+/// `-`, etc.) that are not valid identifiers. The `access:` value must be exactly
+/// `internal`, `package`, or `public`.
 ///
 /// - Parameters:
 ///   - text: Full config file contents.
 ///   - path: Path of the config file, echoed in any thrown error.
-/// - Returns: A ``ParsedConfigFile`` wrapping the parsed config and optional envFile path.
+/// - Returns: A ``ParsedConfigFile`` wrapping the parsed config, the optional envFile
+///   path, and the access level.
 /// - Throws: ``ConfigError/parse(path:line:reason:)`` on any grammar violation.
 public func parseYAMLConfigFile(_ text: String, path: String) throws(ConfigError) -> ParsedConfigFile {
     let lines = text.components(separatedBy: "\n")
@@ -158,7 +180,7 @@ public func parseYAMLConfigFile(_ text: String, path: String) throws(ConfigError
         }
     }
 
-    let (envFile, body) = try extractEnvFileDirective(normalized, path: path)
+    let (envFile, access, body) = try extractHeaderDirectives(normalized, path: path)
 
     let firstMeaningful = body.first {
         let s = $0.trimmingCharacters(in: .whitespaces)
@@ -175,89 +197,110 @@ public func parseYAMLConfigFile(_ text: String, path: String) throws(ConfigError
     } else {
         secrets = .flat(try parseFlat(body, path: path))
     }
-    return ParsedConfigFile(secrets: secrets, envFile: envFile)
+    return ParsedConfigFile(secrets: secrets, envFile: envFile, access: access)
 }
 
-/// Captures an optional leading `envFile:` directive from a normalized line array.
+/// The directives a config may open with, before any section header or mapping.
+private enum HeaderDirective: String, CaseIterable {
+    case envFile
+    case access
+
+    var prefix: String { "\(rawValue):" }
+}
+
+/// Captures the optional leading `envFile:` and `access:` directives from a normalized
+/// line array.
 ///
-/// Recognizes `envFile:` only when it is the first non-blank, non-comment line at column 1.
-/// Returns the directive value (raw, trimmed) and a copy of `lines` with the directive
-/// line replaced by a blank line so downstream error line numbers stay correct.
+/// The header is the run of column-1 directive lines at the top of the file, with
+/// blank lines and comments allowed between them. Each directive may appear once, in
+/// either order; the first line that isn't a directive ends the header. Returns the
+/// directive values and a copy of `lines` with each directive line replaced by a blank
+/// line so downstream error line numbers stay correct.
 ///
 /// The Lipservice plugin duplicates this recognition rule (plugins can't link this
-/// target) to declare the env file as a build input — keep
-/// `Plugins/Lipservice/Lipservice.swift` (`envFileInput`) in sync when changing it.
-private func extractEnvFileDirective(
+/// target) to declare the env file as a build input and to keep directive values out of
+/// the forwarded environment — keep `envFileInput` and `forwardedNames` in
+/// `Plugins/Lipservice/Lipservice.swift` in sync when changing it.
+private func extractHeaderDirectives(
     _ lines: [String],
     path: String
-) throws(ConfigError) -> (envFile: String?, body: [String]) {
+) throws(ConfigError) -> (envFile: String?, access: AccessLevel, body: [String]) {
     var output = lines
+    var envFile: String?
+    var access: AccessLevel = .internal
+    var seen: [HeaderDirective: Int] = [:]
     for (idx, rawLine) in lines.enumerated() {
         let lineNumber = idx + 1
         let stripped = rawLine.trimmingCharacters(in: .whitespaces)
         if stripped.isEmpty || stripped.hasPrefix("#") { continue }
 
-        guard rawLine.first?.isWhitespace == false else { return (nil, output) }
+        guard rawLine.first?.isWhitespace == false,
+            let directive = HeaderDirective.allCases.first(where: { stripped.hasPrefix($0.prefix) })
+        else { break }
 
-        let directive = "envFile:"
-        guard stripped.hasPrefix(directive) else { return (nil, output) }
+        if let prior = seen[directive] {
+            throw .parse(
+                path: path,
+                line: lineNumber,
+                reason: "duplicate \(directive.rawValue) directive (first defined on line \(prior))"
+            )
+        }
+        seen[directive] = lineNumber
 
-        let value = String(stripped.dropFirst(directive.count)).trimmingCharacters(in: .whitespaces)
+        let value = String(stripped.dropFirst(directive.prefix.count)).trimmingCharacters(in: .whitespaces)
         if value.isEmpty {
-            throw .parse(path: path, line: lineNumber, reason: "envFile directive has no value")
+            throw .parse(path: path, line: lineNumber, reason: "\(directive.rawValue) directive has no value")
         }
         if rawLine.contains("\t") {
             throw .parse(path: path, line: lineNumber, reason: "tab character not allowed; use spaces")
         }
-        if value.contains("#") || value.contains(where: \.isWhitespace) {
-            // A stray "# comment" silently becomes part of the path, fileExists fails,
-            // and sourcing falls back to the process environment — reject it loudly.
-            throw .parse(
-                path: path,
-                line: lineNumber,
-                reason: "envFile path must not contain spaces or '#' (inline comments are not supported)"
-            )
-        }
-        if value.contains(where: { "\"'$`".contains($0) }) {
-            // Nothing here expands shell syntax, so `"./x.env"` or `$HOME/x.env` would
-            // silently become a literal relative path that never exists.
-            throw .parse(
-                path: path,
-                line: lineNumber,
-                reason: "envFile path must be written bare; quotes, '$', and backticks are not expanded"
-            )
-        }
-        if value == "~" || value.hasSuffix("/") {
-            // zsh's `source` of a directory succeeds and exports nothing, so this
-            // would otherwise be a silent no-op.
-            throw .parse(
-                path: path,
-                line: lineNumber,
-                reason: "envFile must name a file, not a directory"
-            )
-        }
-        if value.hasPrefix("~"), !value.hasPrefix("~/") {
-            throw .parse(
-                path: path,
-                line: lineNumber,
-                reason: "only a leading '~/' is expanded in an envFile path; '~user' paths are not supported"
-            )
-        }
-        // `KEY?` reads as a mapping just as much as `KEY` does.
-        if parseEnvVarReference(value[...]) != nil {
-            throw .parse(
-                path: path,
-                line: lineNumber,
-                reason: """
-                    envFile value '\(value)' is ambiguous with a secret mapping; \
-                    for a relative path, write './\(value)'
-                    """
-            )
+        switch directive {
+        case .envFile:
+            if let reason = envFilePathReason(value) {
+                throw .parse(path: path, line: lineNumber, reason: reason)
+            }
+            envFile = value
+        case .access:
+            guard let level = AccessLevel(rawValue: value) else {
+                throw .parse(
+                    path: path,
+                    line: lineNumber,
+                    reason: "access must be internal, package, or public; got '\(value)'"
+                )
+            }
+            access = level
         }
         output[idx] = ""
-        return (value, output)
     }
-    return (nil, output)
+    return (envFile, access, output)
+}
+
+/// Returns a parse-error reason if an `envFile:` value can't name the file it appears
+/// to, or nil if the path is usable.
+private func envFilePathReason(_ value: String) -> String? {
+    if value.contains("#") || value.contains(where: \.isWhitespace) {
+        // A stray "# comment" silently becomes part of the path, fileExists fails,
+        // and sourcing falls back to the process environment — reject it loudly.
+        return "envFile path must not contain spaces or '#' (inline comments are not supported)"
+    }
+    if value.contains(where: { "\"'$`".contains($0) }) {
+        // Nothing here expands shell syntax, so `"./x.env"` or `$HOME/x.env` would
+        // silently become a literal relative path that never exists.
+        return "envFile path must be written bare; quotes, '$', and backticks are not expanded"
+    }
+    if value == "~" || value.hasSuffix("/") {
+        // zsh's `source` of a directory succeeds and exports nothing, so this
+        // would otherwise be a silent no-op.
+        return "envFile must name a file, not a directory"
+    }
+    if value.hasPrefix("~"), !value.hasPrefix("~/") {
+        return "only a leading '~/' is expanded in an envFile path; '~user' paths are not supported"
+    }
+    // `KEY?` reads as a mapping just as much as `KEY` does.
+    if parseEnvVarReference(value[...]) != nil {
+        return "envFile value '\(value)' is ambiguous with a secret mapping; for a relative path, write './\(value)'"
+    }
+    return nil
 }
 
 /// Returns a parse-error reason for the first character in `line` that is invisible or
@@ -589,10 +632,10 @@ private let restrictedMemberNames: Set<String> = ["Type", "Protocol", "_"]
 /// Returns a parse-error reason if `name` cannot be emitted as a property on the
 /// generated enum, or nil if the name is usable.
 private func reservedNameReason(_ name: String) -> String? {
-    if name == "envFile" {
-        // Allowed only in directive position (the first meaningful line); as a
-        // property name anywhere else it would make the config ambiguous.
-        return "'envFile' is reserved for the envFile directive and cannot be used as a secret name"
+    if HeaderDirective(rawValue: name) != nil {
+        // Allowed only in directive position (the header); as a property name anywhere
+        // else it would make the config ambiguous.
+        return "'\(name)' is reserved for the \(name) directive and cannot be used as a secret name"
     }
     if swiftKeywords.contains(name) {
         return "'\(name)' is a Swift keyword and cannot be used as a secret name"
@@ -668,6 +711,10 @@ public func missingEnvVarDiagnostic(envVar: String, environment: [String: String
 
 /// Renders the generated `nonisolated enum Secrets { ... }` Swift source.
 ///
+/// `access` prefixes the enum and every property with its keyword; `salt` and `decode`
+/// stay `private`. ``AccessLevel/internal`` writes no keyword, so its output matches a
+/// config without an `access:` directive byte for byte.
+///
 /// Every name must be an identifier that the parser accepts as a secret name, and
 /// `environment` must be an identifier; anything else traps rather than splicing
 /// arbitrary text into Swift source.
@@ -683,10 +730,12 @@ public func missingEnvVarDiagnostic(envVar: String, environment: [String: String
 /// - Parameters:
 ///   - resolved: Name/value pairs.
 ///   - environment: If non-nil, annotates the header with the active environment name.
+///   - access: The access level of the enum and its properties.
 /// - Returns: Complete Swift source text, terminated with a trailing newline.
 public func renderSecretsEnum(
     _ resolved: [(name: String, value: String)],
-    environment: String? = nil
+    environment: String? = nil,
+    access: AccessLevel = .internal
 ) -> String {
     let sorted = resolved.sorted { $0.name < $1.name }
     let salt = deriveSalt(for: sorted)
@@ -696,9 +745,12 @@ public func renderSecretsEnum(
     }
     precondition(environment.map(isIdentifier) ?? true, "invalid environment name")
 
+    let keyword = access == .internal ? "" : "\(access.rawValue) "
     let properties =
         sorted
-        .map { "    static let \($0.name): Swift.String = Self.decode(\"\(obfuscate($0.value, salt: salt))\")" }
+        .map { name, value in
+            "    \(keyword)static let \(name): Swift.String = Self.decode(\"\(obfuscate(value, salt: salt))\")"
+        }
         .joined(separator: "\n")
 
     let saltLiteral = salt.map { String(format: "0x%02X", $0) }.joined(separator: ", ")
@@ -709,7 +761,7 @@ public func renderSecretsEnum(
         // Regenerated from environment variables when Secrets.yml or the env file changes.\(envLine)
         import Foundation
 
-        nonisolated enum Secrets {
+        \(keyword)nonisolated enum Secrets {
         \(properties)
 
             private static let salt: [Swift.UInt8] = [\(saltLiteral)]
@@ -1212,7 +1264,7 @@ public func generateSecretsFile(
         return false
     }
 
-    let output = Data(renderSecretsEnum(resolved, environment: envName).utf8)
+    let output = Data(renderSecretsEnum(resolved, environment: envName, access: configFile.access).utf8)
     let outputURL = URL(fileURLWithPath: outputPath)
     if let existing = try? Data(contentsOf: outputURL), existing == output {
         return true
