@@ -99,8 +99,10 @@ private func makeCommand(
 
 /// Locates the env file the tool will source, so edits to it re-trigger generation.
 ///
-/// This mirrors TightlipCore's directive recognition (`extractEnvFileDirective`) and
-/// path resolution (`resolveEnvFilePath`) just closely enough for input tracking.
+/// This mirrors TightlipCore's header recognition (`extractHeaderDirectives`) and path
+/// resolution (`resolveEnvFilePath`) just closely enough for input tracking: `envFile:`
+/// may sit anywhere in the run of directive lines that opens the file, before or after
+/// `access:`.
 /// Plugins can't depend on library targets, so the duplication is deliberate and
 /// fail-open: if this scan ever disagrees with the real parser, the worst case is
 /// input tracking as stale as it was before this existed — the tool remains the sole
@@ -111,11 +113,11 @@ private func envFileInput(configLines: [String], configURL: URL) -> URL? {
         let line = rawLine.hasSuffix("\r") ? String(rawLine.dropLast()) : rawLine
         let stripped = line.trimmingCharacters(in: .whitespaces)
         if stripped.isEmpty || stripped.hasPrefix("#") { continue }
-        if line.first?.isWhitespace == false, stripped.hasPrefix("envFile:") {
+        guard isDirective(line) else { break }
+        if stripped.hasPrefix("envFile:") {
             declared = String(stripped.dropFirst("envFile:".count))
                 .trimmingCharacters(in: .whitespaces)
         }
-        break
     }
 
     let home = FileManager.default.homeDirectoryForCurrentUser
@@ -197,14 +199,15 @@ private func writeForwardedEnvironment(configLines: [String], to url: URL) -> Bo
 
 /// Every identifier on the right of a `name: VALUE` or `name: VALUE?` line, in any
 /// section, plus `TIGHTLIP_ENV`. The `?` (which allows an empty value) is not part of the
-/// variable's name. Deliberately looser than the real grammar (`splitMapping` in
+/// variable's name. Directive lines are skipped, so `access: public` doesn't forward a
+/// variable named `public`. Deliberately looser than the real grammar (`splitMapping` in
 /// TightlipCore): an extra name only costs an unused entry, and the tool rejects
 /// malformed configs anyway.
 private func forwardedNames(configLines: [String]) -> Set<String> {
     var names: Set<String> = ["TIGHTLIP_ENV"]
     for rawLine in configLines {
         let stripped = rawLine.trimmingCharacters(in: .whitespacesAndNewlines)
-        if stripped.hasPrefix("#") { continue }
+        if stripped.hasPrefix("#") || isDirective(rawLine) { continue }
         guard let colon = stripped.firstIndex(of: ":") else { continue }
         var value = stripped[stripped.index(after: colon)...].trimmingCharacters(in: .whitespaces)
         if value.hasSuffix("?") {
@@ -215,6 +218,12 @@ private func forwardedNames(configLines: [String]) -> Set<String> {
         }
     }
     return names
+}
+
+/// Whether `line` is an `envFile:` or `access:` directive at column 1. Both names are
+/// reserved as secret names, so a line like this is never a mapping.
+private func isDirective(_ line: String) -> Bool {
+    line.hasPrefix("envFile:") || line.hasPrefix("access:")
 }
 
 private func isIdentifier(_ s: String) -> Bool {

@@ -73,7 +73,7 @@ jobs:
       - name: Env file edits re-trigger generation without a clean
         run: |
           cd Fixtures/DemoApp
-          printf 'export TIGHTLIP_DEMO_KEY=updated-value\n' > Sources/DemoApp/secrets.env
+          printf 'export TIGHTLIP_DEMO_KEY=updated-value\n' > Sources/DemoSecrets/secrets.env
           swift build --product DemoApp
           test "$(./.build/debug/DemoApp)" = "updated-value"
 

@@ -179,7 +179,7 @@ struct ParseEnvFileFieldTests {
     }
 
     @Test func envFileAsSecretNameIsParseError() throws {
-        // Only the first meaningful line is directive position; anywhere else,
+        // Directives are only recognized in the header, before the first mapping; anywhere else,
         // `envFile` as a property name is reserved to keep the config unambiguous.
         do {
             _ = try parseYAMLConfigFile("foo: BAR\nenvFile: BAZ", path: "t.yml")

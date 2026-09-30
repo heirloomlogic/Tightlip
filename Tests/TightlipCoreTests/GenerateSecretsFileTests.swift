@@ -138,6 +138,18 @@ struct GenerateSecretsFileTests {
         #expect(try run.decoded("apiKey") == "from-file")
     }
 
+    @Test func accessDirectiveReachesTheOutputAheadOfEnvFile() throws {
+        let run = try Run(config: "access: public\nenvFile: ./local.env\napiKey: TIGHTLIP_GEN_KEY")
+        try "export TIGHTLIP_GEN_KEY=from-file\n".write(
+            to: run.directory.appendingPathComponent("local.env"), atomically: true, encoding: .utf8)
+        let result = run.generate(processEnvironment: [:])
+        #expect(result.succeeded, "output: \(result.lines)")
+        let output = try run.output()
+        #expect(output.contains("\npublic nonisolated enum Secrets {\n"))
+        #expect(output.contains("\n    public static let apiKey: Swift.String"))
+        #expect(try run.decoded("apiKey") == "from-file")
+    }
+
     @Test func forwardedEnvironmentReachesTheTool() throws {
         // SwiftPM's swiftbuild backend hands the tool a synthesized environment; the
         // plugin's forwarded file is how a CI job's variables get through.

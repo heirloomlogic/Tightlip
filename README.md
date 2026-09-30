@@ -54,7 +54,7 @@ gh skill install heirloomlogic/skills tightlip-ref --agent codex --force --scope
 
 ## Usage
 
-Tightlip reads a single config file, `Secrets.yml`, in one of two formats. The format is auto-detected from the first non-comment line.
+Tightlip reads a single config file, `Secrets.yml`, in one of two formats. The format is auto-detected from the first non-comment line after any header directives.
 
 ### Flat config
 
@@ -87,12 +87,13 @@ The parser is deliberately strict:
 
 - Property names and env-var names must be bare ASCII identifiers (`[A-Za-z_][A-Za-z0-9_]*`). No quoting.
 - An env-var name may end in `?` (`analyticsKey: ANALYTICS_KEY?`) to allow an empty value. The marker belongs to that one line, so in a sectioned config staging can allow an empty value while production requires one. No space before the `?`.
-- Property names may not be Swift keywords (`class`, `default`, …; `open` is allowed), member names Swift rejects (`Type`, `Protocol`, `_`), names the generated enum reserves for itself (`salt`, `decode`, and `Swift` and `Foundation`, the module names its decode shim qualifies library symbols with), or `envFile` — any of these would produce a non-compiling or ambiguous generated file, so the parser rejects them up front. `Data`, `String`, `UTF8`, and the like are fine.
+- Property names may not be Swift keywords (`class`, `default`, …; `open` is allowed), member names Swift rejects (`Type`, `Protocol`, `_`), names the generated enum reserves for itself (`salt`, `decode`, and `Swift` and `Foundation`, the module names its decode shim qualifies library symbols with), or the directive names `envFile` and `access` — any of these would produce a non-compiling or ambiguous generated file, so the parser rejects them up front. `Data`, `String`, `UTF8`, and the like are fine.
 - `#` at the start of a line is a comment. Inline comments after a value are not supported.
 - Blank lines are fine. Tabs are not — anywhere.
 - Invisible characters (a no-break space pasted from Slack or Notion, a zero-width space, a stray carriage return) are parse errors, reported with their column. Comments and blank lines may contain anything.
 - Flat mode: no leading whitespace on mapping lines.
 - Sectioned mode: section headers at column 1, content at exactly 2-space indent.
+- The `envFile:` and `access:` directives go at column 1 before the first section header or mapping, in either order, each at most once.
 - Duplicate keys, empty files, and anything else outside this grammar are parse errors with a line number.
 
 The full rules live in the [Config Grammar](https://heirloomlogic.github.io/Tightlip/documentation/tightlipcore/configgrammar) reference.
@@ -102,6 +103,25 @@ Every declared secret is required at build time. If an env var is unset or set t
 ### Naming convention
 
 Devs working on several apps on the same machine see bare names like `REVENUECAT_API_KEY` collide. Prefix every env var with an app-specific tag — `<APP_PREFIX>_<SECRET>` in screaming snake case (e.g. `ACME_REVENUECAT_API_KEY`). The plugin doesn't enforce this; the convention just keeps configs across projects from stepping on each other.
+
+### Sharing secrets across modules
+
+The generated enum and its properties are `internal` by default, so only the target that holds `Secrets.yml` can read them. In an app split into modules, where one secrets target feeds several feature targets, widen that with an `access:` directive at the top of the config:
+
+```yaml
+access: package
+envFile: ./secrets.env
+revenueCatAPIKey: ACME_REVENUECAT_API_KEY
+```
+
+The value is `internal` (the default), `package`, or `public`. Anything else, `public?` included, is a parse error. The keyword goes on the enum and on every property. The decode shim stays `private`.
+
+- `package` makes `Secrets` visible to the other targets in the same SwiftPM package, and nowhere else. The secrets target and the targets that read it must all belong to one package, such as a local package that holds your app's modules.
+- `public` makes `Secrets` visible to every module that imports the secrets target.
+
+Either level widens the secrets module's API surface: every module that can see `Secrets` can read every value in it. The directive exists for module boundaries inside one app. It is not a way to publish secrets from a library other people depend on. Prefer `package` when your layout allows it, since it keeps the enum out of anything outside the package.
+
+`access` is reserved as a secret name. With `internal`, the generated file is byte-identical to one from a config without the directive.
 
 ## Environment selection
 
@@ -146,7 +166,7 @@ nonisolated enum Secrets {
 
 Call sites see plain `String` (`Secrets.appAPIKey`). The shim spells library symbols module-qualified (`Swift.String`, `Foundation.Data`), so a type of your own named `Data` or `UTF8` can't break the generated file. The stored bytes are XOR-encoded against a 32-byte salt derived deterministically from the resolved values, so identical inputs produce byte-identical output; the tool leaves an unchanged file untouched, so it doesn't recompile. Plaintext literals never appear in the compiled binary; `strings` against the shipped `.app` won't surface them.
 
-Properties are emitted in alphabetical order. The enum is always named `Secrets`. The `// Environment:` comment appears only for sectioned configs.
+Properties are emitted in alphabetical order. The enum is always named `Secrets`. With `access: package` or `access: public`, that keyword leads the enum and every property (see [Sharing secrets across modules](#sharing-secrets-across-modules)). The `// Environment:` comment appears only for sectioned configs.
 
 ## Sourcing environment variables
 
@@ -181,7 +201,7 @@ For non-zsh shells, point the directive at a file of zsh-compatible `export KEY=
 
 CI runners typically have no `.zshenv`; the tool uses the build environment alone and the job's `env:` block works unchanged.
 
-The directive is recognized only as the first non-blank, non-comment line. Anything after a section header or property mapping is parsed as a secret declaration.
+The directive is recognized only before the first section header or property mapping. It may come before or after an `access:` directive. Anywhere later it is parsed as a secret declaration and fails.
 
 ### Project-local env file
 
