@@ -8,6 +8,7 @@ let package = Package(
     platforms: [.macOS(.v10_15), .iOS(.v13), .tvOS(.v13), .watchOS(.v6)],
     products: [
         .plugin(name: "Lipservice", targets: ["Lipservice"]),
+        .plugin(name: "TightlipCheck", targets: ["TightlipCheck"]),
     ],
     targets: [
         .target(name: "TightlipCore"),
@@ -16,6 +17,16 @@ let package = Package(
         .plugin(
             name: "Lipservice",
             capability: .buildTool(),
+            dependencies: ["LipserviceTool"],
+        ),
+        .plugin(
+            name: "TightlipCheck",
+            capability: .command(
+                intent: .custom(
+                    verb: "tightlip-check",
+                    description: "Check Secrets.yml and the environment a build would see, without building"
+                )
+            ),
             dependencies: ["LipserviceTool"],
         ),
     ]
