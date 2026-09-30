@@ -231,6 +231,21 @@ Note that a project-local file must be re-created in every git worktree; a machi
 
 Tightlip intentionally has no auto-discovered `.env` feature: the directive above already covers project-local files, and auto-discovery plus a bespoke dotenv parser would add an accidental-commit footgun and a value-parsing code path that shell-sourcing avoids.
 
+## Checking a config
+
+`swift package tightlip-check` runs the build tool's steps without writing anything: it parses each target's `Secrets.yml`, sources the env file, selects the section, and resolves every variable. Add `--target MyApp` to check one target.
+
+```text
+environment: staging (TIGHTLIP_ENV)
+env file: /Users/you/.zshenv
+variables:
+  ACME_API_KEY (Secrets.apiKey): set, from the env file
+  ACME_ANALYTICS_ID (Secrets.analyticsID): missing
+result: a build would fail
+```
+
+Above the report it prints the diagnostics a build would, including `path:line: error:` parse errors. Each variable is `set`, `set but empty (allowed)`, `set but empty`, or `missing`, and names whether its value came from the env file or the environment. Values are never printed. The command exits non-zero when a build would fail at the Lipservice step, so a CI job can run it before the build. It uses the part of the shell's environment that a `swiftbuild` build passes to the tool: the variables `Secrets.yml` names, `TIGHTLIP_ENV`, `CONFIGURATION`, `HOME`, and `PATH`. An Xcode.app build may see a different environment. An Xcode project can run the command from the Project navigator's context menu, though that has not been tested in Xcode. See [Checking a config](https://heirloomlogic.github.io/Tightlip/documentation/tightlipcore/checkingconfig).
+
 ## Troubleshooting
 
 **`error: environment variable X must be set to generate Secrets.Y`** — the env var is unset in both the sourced file and the build environment. Every missing variable is reported in the same build, followed by a single `note: set the missing variable(s) in your shell, ~/.zshenv (for Xcode.app), or your CI environment`. The `note:` line above each error lists everything visible with the same prefix (e.g. `ACME_*`), which usually points at a typo. Confirm the key exists in your `envFile` (default `~/.zshenv`).

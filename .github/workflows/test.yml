@@ -77,6 +77,40 @@ jobs:
           swift build --product DemoApp
           test "$(./.build/debug/DemoApp)" = "updated-value"
 
+      # The check command runs the build's pipeline without writing the generated file.
+      # It must report each variable's state and source, never print a value, and fail
+      # where a build would: here, the production section's variable is unset.
+      - name: tightlip-check reports variables and fails where a build would
+        run: |
+          cd Fixtures/DemoApp
+          fail() { echo "::error::$1"; exit 1; }
+          demo_value="$(sed -n 's/^export TIGHTLIP_DEMO_KEY=//p' Sources/DemoSecrets/secrets.env)"
+          export TIGHTLIP_FIXTURE_STAGING=fixture-staging-secret TIGHTLIP_FIXTURE_OPTIONAL=
+          out="$(TIGHTLIP_ENV=staging swift package tightlip-check)"
+          printf '%s\n' "$out"
+          grep -qxF '  TIGHTLIP_DEMO_KEY (Secrets.demoKey): set, from the env file' <<<"$out"
+          grep -qxF 'environment: staging (TIGHTLIP_ENV)' <<<"$out"
+          grep -qxF '  TIGHTLIP_FIXTURE_OPTIONAL (Secrets.optionalKey): set but empty (allowed), from the build environment' <<<"$out"
+          for value in "$demo_value" fixture-staging-secret; do
+            if grep -qF -- "$value" <<<"$out"; then fail "tightlip-check printed a value"; fi
+          done
+          if TIGHTLIP_ENV=production swift package tightlip-check --target SectionedDemo; then
+            fail "tightlip-check passed with the production section's variable unset"
+          fi
+          # A `--target` with no value is an error, not a check of every target.
+          if TIGHTLIP_ENV=staging swift package tightlip-check --target; then
+            fail "tightlip-check accepted --target with no value"
+          fi
+          # Under swiftbuild the env file sees only the variables the config names, so
+          # one that reads an undeclared variable gets "" and the build fails. The check
+          # must fail the same way even though this shell exports the variable.
+          printf 'export TIGHTLIP_DEMO_KEY="$TIGHTLIP_FIXTURE_UNDECLARED"\n' > Sources/DemoSecrets/secrets.env
+          if out="$(TIGHTLIP_FIXTURE_UNDECLARED=undeclared-value swift package tightlip-check --target DemoSecrets)"; then
+            fail "tightlip-check passed an env file that reads an undeclared variable"
+          fi
+          printf '%s\n' "$out"
+          grep -qxF '  TIGHTLIP_DEMO_KEY (Secrets.demoKey): set but empty, from the env file' <<<"$out"
+
   # A separate job because swiftbuild keeps its own build tree: in the job above it
   # would rebuild the tool and TightlipCore serially after the native steps.
   test-fixture-swiftbuild:

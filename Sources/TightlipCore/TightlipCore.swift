@@ -527,10 +527,40 @@ private func parseSectioned(
 ///    guessing non-production for a custom Release-like configuration (e.g. "AppStore")
 ///    would silently ship the wrong keys.
 /// 3. Error if neither mechanism resolves.
+///
+/// ``selectEnvironment(sections:environment:)`` applies the same rules and also reports
+/// which one decided.
 public func resolveEnvironment(
     sections: [ParsedSection],
     environment: [String: String]
 ) throws(ConfigError) -> String {
+    try selectEnvironment(sections: sections, environment: environment).section
+}
+
+/// The section a sectioned config selects, and the rule that selected it.
+public enum SectionSelection: Equatable, Sendable {
+    /// `TIGHTLIP_ENV` named the section.
+    case tightlipEnv(section: String)
+
+    /// Inferred from `CONFIGURATION`, which is nil when unset or empty (inferred like
+    /// `Debug`). `debugSection` and `releaseSection` are what `Debug` and `Release` select.
+    case inferred(section: String, configuration: String?, debugSection: String, releaseSection: String)
+
+    /// The selected section's name.
+    public var section: String {
+        switch self {
+        case .tightlipEnv(let section), .inferred(let section, _, _, _):
+            return section
+        }
+    }
+}
+
+/// Selects the section a build uses, by the rules of
+/// ``resolveEnvironment(sections:environment:)``, and reports which rule decided.
+public func selectEnvironment(
+    sections: [ParsedSection],
+    environment: [String: String]
+) throws(ConfigError) -> SectionSelection {
     let sectionNames = sections.map(\.name)
 
     if let explicit = environment["TIGHTLIP_ENV"], !explicit.isEmpty {
@@ -540,7 +570,7 @@ public func resolveEnvironment(
                 reason: "TIGHTLIP_ENV='\(explicit)' does not match any section"
             )
         }
-        return explicit
+        return .tightlipEnv(section: explicit)
     }
 
     if sectionNames.count == 2 {
@@ -551,11 +581,12 @@ public func resolveEnvironment(
             let otherName = sectionNames.first(where: { $0 != prodName })
         {
             let configuration = environment["CONFIGURATION"] ?? ""
+            let section: String
             switch configuration.lowercased() {
             case "release":
-                return prodName
+                section = prodName
             case "debug", "":
-                return otherName
+                section = otherName
             default:
                 throw .indeterminateEnvironment(
                     available: sectionNames,
@@ -565,6 +596,12 @@ public func resolveEnvironment(
                         """
                 )
             }
+            return .inferred(
+                section: section,
+                configuration: configuration.isEmpty ? nil : configuration,
+                debugSection: otherName,
+                releaseSection: prodName
+            )
         }
     }
 
@@ -1109,6 +1146,291 @@ private final class PipeBuffer: @unchecked Sendable {
 
 // MARK: - Build tool entry point
 
+/// How one declared variable resolved, without its value.
+public struct VariableStatus: Equatable, Sendable {
+    /// Whether the variable is set, and whether its value is usable.
+    public enum State: Equatable, Sendable {
+        /// Set to a non-empty value.
+        case set
+
+        /// Set to the empty string, which the secret's `?` marker allows.
+        case setButEmptyAllowed
+
+        /// Set to the empty string without a `?` marker. The build fails.
+        case setButEmpty
+
+        /// Not set in the env file or the build environment. The build fails.
+        case missing
+    }
+
+    /// Where the value came from.
+    public enum Source: Equatable, Sendable {
+        /// The sourced env file (`envFile:`, or `~/.zshenv` by default).
+        case envFile
+
+        /// The environment the tool ran in, which wins over the env file per key.
+        case buildEnvironment
+    }
+
+    /// The declared secret.
+    public let secret: ParsedSecret
+
+    /// Whether the variable is set, and whether its value is usable.
+    public let state: State
+
+    /// Where the value came from, or nil when the variable is missing.
+    public let source: Source?
+
+    /// Whether this variable lets the build succeed.
+    public var isUsable: Bool { state == .set || state == .setButEmptyAllowed }
+}
+
+/// What a Lipservice run found before rendering: the section it selected and how each
+/// declared variable resolved. Produced by
+/// ``evaluateSecretsConfig(configPath:forwardedEnvironmentPath:processEnvironment:homeDirectory:emit:)``.
+///
+/// Holds the resolved values for rendering, but exposes none of them.
+public struct SecretsEvaluation: Sendable {
+    /// The section a config selected, if it has sections.
+    public enum Selection: Equatable, Sendable {
+        /// A flat config, which has no sections.
+        case flat
+
+        /// A sectioned config, and the rule that picked the section.
+        case selected(SectionSelection)
+
+        /// A sectioned config whose section could not be determined. The build fails.
+        case undetermined(ConfigError)
+
+        /// The selected section's name, or nil for a flat config or an undetermined section.
+        public var section: String? {
+            if case .selected(let selection) = self { selection.section } else { nil }
+        }
+    }
+
+    /// The parsed config and its directives.
+    public let config: ParsedConfigFile
+
+    /// The env file the run sourced (or would have, had it existed).
+    public let envFile: URL
+
+    /// The section the run selected.
+    public let selection: Selection
+
+    /// Every variable the selected section declares, in config order. Empty when the
+    /// section is undetermined.
+    public let variables: [VariableStatus]
+
+    let resolved: [(name: String, value: String)]
+
+    /// Whether a build would go on to write the generated file.
+    public var succeeded: Bool {
+        if case .undetermined = selection { return false }
+        return variables.allSatisfy(\.isUsable)
+    }
+}
+
+/// Runs a Lipservice generation up to rendering: parse the config, assemble the build
+/// environment, select the section, and resolve every secret.
+///
+/// Emits the same diagnostics, in the same order, as
+/// ``generateSecretsFile(configPath:outputPath:forwardedEnvironmentPath:processEnvironment:homeDirectory:emit:)``,
+/// which renders and writes the result.
+///
+/// - Parameters:
+///   - configPath: Path to `Secrets.yml`.
+///   - forwardedEnvironmentPath: A file of NUL-terminated `KEY=VALUE` entries the
+///     Lipservice plugin copied from its own environment, or nil.
+///   - processEnvironment: The tool's own environment. Wins per key over forwarded entries.
+///   - homeDirectory: Directory a leading `~/` in the env file path expands to.
+///   - emit: Receives each diagnostic line.
+/// - Returns: The evaluation, or nil after emitting an error when the config can't be
+///   read or parsed.
+public func evaluateSecretsConfig(
+    configPath: String,
+    forwardedEnvironmentPath: String?,
+    processEnvironment: [String: String],
+    homeDirectory: URL,
+    emit: (String) -> Void
+) -> SecretsEvaluation? {
+    evaluate(
+        configPath: configPath,
+        forwardedEnvironmentPath: forwardedEnvironmentPath,
+        processEnvironment: processEnvironment,
+        homeDirectory: homeDirectory,
+        emit: emit,
+        keeping: nil
+    )
+}
+
+/// The body of
+/// ``evaluateSecretsConfig(configPath:forwardedEnvironmentPath:processEnvironment:homeDirectory:emit:)``.
+/// `keeping`, given the parsed config, returns the names to keep from the forwarded and
+/// process environments before the env file is sourced; nil keeps them all.
+private func evaluate(
+    configPath: String,
+    forwardedEnvironmentPath: String?,
+    processEnvironment: [String: String],
+    homeDirectory: URL,
+    emit: (String) -> Void,
+    keeping: ((ParsedConfigFile) -> Set<String>)?
+) -> SecretsEvaluation? {
+    let configURL = URL(fileURLWithPath: configPath)
+    let configText: String
+    do {
+        configText = try String(contentsOf: configURL, encoding: .utf8)
+    } catch let error as CocoaError where error.code == .fileReadNoSuchFile {
+        emit(
+            "error: Tightlip config missing at \(configPath). Create Secrets.yml there — "
+                + "in a Swift package, the target's source directory; in an Xcode project, "
+                + "a folder named after the target's display name, beside the .xcodeproj"
+        )
+        return nil
+    } catch let error as CocoaError
+        where error.code == .fileReadInapplicableStringEncoding || error.code == .fileReadCorruptFile
+    {
+        let reason = "config is not valid UTF-8; save it with UTF-8 encoding"
+        emit(ConfigError.parse(path: configPath, line: nil, reason: reason).diagnostic)
+        return nil
+    } catch {
+        emit("error: failed to read \(configPath): \(error.localizedDescription)")
+        return nil
+    }
+
+    let configFile: ParsedConfigFile
+    do {
+        configFile = try parseYAMLConfigFile(configText, path: configPath)
+    } catch {
+        emit(error.diagnostic)
+        return nil
+    }
+
+    var buildEnvironment: [String: String] = [:]
+    if let forwardedEnvironmentPath {
+        if let data = FileManager.default.contents(atPath: forwardedEnvironmentPath) {
+            buildEnvironment = parseEnvironmentEntries(data) { key in
+                emit("note: forwarded value of \(key) is not valid UTF-8 and was ignored")
+            }
+        } else {
+            emit("note: forwarded environment missing at \(forwardedEnvironmentPath)")
+        }
+    }
+    buildEnvironment.merge(processEnvironment) { _, process in process }
+    if let keep = keeping?(configFile) {
+        buildEnvironment = buildEnvironment.filter { keep.contains($0.key) }
+    }
+
+    let envFileURL = resolveEnvFilePath(
+        configFile.envFile ?? TightlipDefaults.envFilePath,
+        configDir: configURL.deletingLastPathComponent(),
+        homeDirectory: homeDirectory
+    )
+    // An absent default ~/.zshenv is the normal CI case and stays silent, but an
+    // explicitly declared envFile that doesn't resolve is a misconfiguration worth
+    // pointing at before the missing-env-var errors it will cause.
+    if configFile.envFile != nil, !FileManager.default.fileExists(atPath: envFileURL.path) {
+        emit("note: declared envFile not found at \(envFileURL.path); using the build environment only")
+    }
+    let captured = captureShellEnvironment(
+        envFile: envFileURL,
+        processEnvironment: buildEnvironment,
+        onNote: { emit("note: \($0)") }
+    )
+    let environment = captured.merged
+
+    let secrets: [ParsedSecret]
+    let selection: SecretsEvaluation.Selection
+    switch configFile.secrets {
+    case .flat(let parsed):
+        secrets = parsed
+        selection = .flat
+    case .sectioned(let sections):
+        // Overriding the file's TIGHTLIP_ENV for one build is routine, and the selected
+        // section is printed below anyway; a note is enough.
+        if captured.overriddenKeys.contains("TIGHTLIP_ENV") {
+            emit("note: TIGHTLIP_ENV from the build environment overrides the value \(envFileURL.path) exports")
+        }
+        let selected: SectionSelection
+        do {
+            selected = try selectEnvironment(sections: sections, environment: environment)
+        } catch {
+            emit(error.diagnostic)
+            return SecretsEvaluation(
+                config: configFile,
+                envFile: envFileURL,
+                selection: .undetermined(error),
+                variables: [],
+                resolved: []
+            )
+        }
+        guard let section = sections.first(where: { $0.name == selected.section }) else {
+            emit("error: internal error: resolved environment '\(selected.section)' not found in sections")
+            return nil
+        }
+        secrets = section.secrets
+        selection = .selected(selected)
+        // Printed before resolution so a wrong-section pick is visible right above the
+        // missing-variable errors it tends to cause.
+        emit("note: using environment '\(selected.section)'")
+    }
+
+    // Resolve every secret before failing so one build surfaces every missing or empty
+    // variable, not one per fix-rebuild cycle. Each failure gets its own `error:` line
+    // (one issue each in Xcode); a missing one also gets its typo-hunting note.
+    var resolved: [(name: String, value: String)] = []
+    var variables: [VariableStatus] = []
+    for secret in secrets {
+        // Ahead of resolution so it also explains a value overridden to "" that then fails.
+        if captured.overriddenKeys.contains(secret.envVar) {
+            // Never print either value — only that the file's copy lost.
+            emit(
+                "warning: \(secret.envVar) from the build environment overrides the different value "
+                    + "\(envFileURL.path) exports; if the file is current, restart the terminal "
+                    + "or Xcode session that launched this build"
+            )
+        }
+        // The capture layers the build environment over the file per key, so a key
+        // the build environment lacks can only have come from the file.
+        let source: VariableStatus.Source? =
+            buildEnvironment[secret.envVar] != nil
+            ? .buildEnvironment : environment[secret.envVar] != nil ? .envFile : nil
+        let state: VariableStatus.State
+        do {
+            let value = try resolveSecret(secret, environment: environment)
+            resolved.append(value)
+            state = value.value.isEmpty ? .setButEmptyAllowed : .set
+        } catch {
+            if case .missingEnvironmentVariable = error {
+                emit("note: \(missingEnvVarDiagnostic(envVar: secret.envVar, environment: environment))")
+                state = .missing
+            } else {
+                state = .setButEmpty
+            }
+            emit(error.diagnostic)
+        }
+        variables.append(VariableStatus(secret: secret, state: state, source: source))
+    }
+    if variables.contains(where: { $0.state == .missing }) {
+        emit("note: set the missing variable(s) in your shell, ~/.zshenv (for Xcode.app), or your CI environment")
+    }
+    if variables.contains(where: { $0.state == .setButEmpty }) {
+        // Inside the build sandbox a `$(security …)` or `$(op read …)` export fails with
+        // status 0 and yields "", which would otherwise ship an empty API key.
+        emit(
+            "note: an empty value usually comes from a leftover `export KEY=` or a `$(…)` substitution "
+                + "in the env file that failed inside the build sandbox; use a literal value, or append '?' "
+                + "to the variable's name in Secrets.yml (`KEY?`) if empty is intended"
+        )
+    }
+    return SecretsEvaluation(
+        config: configFile,
+        envFile: envFileURL,
+        selection: selection,
+        variables: variables,
+        resolved: resolved
+    )
+}
+
 /// Runs one Lipservice generation: parse the config, assemble the build environment,
 /// select the section, resolve every secret, and write the generated file.
 ///
@@ -1136,140 +1458,26 @@ public func generateSecretsFile(
     homeDirectory: URL,
     emit: (String) -> Void
 ) -> Bool {
-    let configURL = URL(fileURLWithPath: configPath)
-    let configText: String
-    do {
-        configText = try String(contentsOf: configURL, encoding: .utf8)
-    } catch let error as CocoaError where error.code == .fileReadNoSuchFile {
-        emit(
-            "error: Tightlip config missing at \(configPath). Create Secrets.yml there — "
-                + "in a Swift package, the target's source directory; in an Xcode project, "
-                + "a folder named after the target's display name, beside the .xcodeproj"
-        )
-        return false
-    } catch let error as CocoaError
-        where error.code == .fileReadInapplicableStringEncoding || error.code == .fileReadCorruptFile
-    {
-        let reason = "config is not valid UTF-8; save it with UTF-8 encoding"
-        emit(ConfigError.parse(path: configPath, line: nil, reason: reason).diagnostic)
-        return false
-    } catch {
-        emit("error: failed to read \(configPath): \(error.localizedDescription)")
+    guard
+        let evaluation = evaluateSecretsConfig(
+            configPath: configPath,
+            forwardedEnvironmentPath: forwardedEnvironmentPath,
+            processEnvironment: processEnvironment,
+            homeDirectory: homeDirectory,
+            emit: emit
+        ),
+        evaluation.succeeded
+    else {
         return false
     }
 
-    let configFile: ParsedConfigFile
-    do {
-        configFile = try parseYAMLConfigFile(configText, path: configPath)
-    } catch {
-        emit(error.diagnostic)
-        return false
-    }
-
-    var buildEnvironment: [String: String] = [:]
-    if let forwardedEnvironmentPath {
-        if let data = FileManager.default.contents(atPath: forwardedEnvironmentPath) {
-            buildEnvironment = parseEnvironmentEntries(data) { key in
-                emit("note: forwarded value of \(key) is not valid UTF-8 and was ignored")
-            }
-        } else {
-            emit("note: forwarded environment missing at \(forwardedEnvironmentPath)")
-        }
-    }
-    buildEnvironment.merge(processEnvironment) { _, process in process }
-
-    let envFileURL = resolveEnvFilePath(
-        configFile.envFile ?? TightlipDefaults.envFilePath,
-        configDir: configURL.deletingLastPathComponent(),
-        homeDirectory: homeDirectory
+    let output = Data(
+        renderSecretsEnum(
+            evaluation.resolved,
+            environment: evaluation.selection.section,
+            access: evaluation.config.access
+        ).utf8
     )
-    // An absent default ~/.zshenv is the normal CI case and stays silent, but an
-    // explicitly declared envFile that doesn't resolve is a misconfiguration worth
-    // pointing at before the missing-env-var errors it will cause.
-    if configFile.envFile != nil, !FileManager.default.fileExists(atPath: envFileURL.path) {
-        emit("note: declared envFile not found at \(envFileURL.path); using the build environment only")
-    }
-    let captured = captureShellEnvironment(
-        envFile: envFileURL,
-        processEnvironment: buildEnvironment,
-        onNote: { emit("note: \($0)") }
-    )
-    let environment = captured.merged
-
-    let secrets: [ParsedSecret]
-    var envName: String?
-    switch configFile.secrets {
-    case .flat(let parsed):
-        secrets = parsed
-    case .sectioned(let sections):
-        // Overriding the file's TIGHTLIP_ENV for one build is routine, and the selected
-        // section is printed below anyway; a note is enough.
-        if captured.overriddenKeys.contains("TIGHTLIP_ENV") {
-            emit("note: TIGHTLIP_ENV from the build environment overrides the value \(envFileURL.path) exports")
-        }
-        let sectionName: String
-        do {
-            sectionName = try resolveEnvironment(sections: sections, environment: environment)
-        } catch {
-            emit(error.diagnostic)
-            return false
-        }
-        guard let section = sections.first(where: { $0.name == sectionName }) else {
-            emit("error: internal error: resolved environment '\(sectionName)' not found in sections")
-            return false
-        }
-        envName = sectionName
-        secrets = section.secrets
-    }
-
-    // Printed before resolution so a wrong-section pick is visible right above the
-    // missing-variable errors it tends to cause.
-    if let envName {
-        emit("note: using environment '\(envName)'")
-    }
-
-    // Resolve every secret before failing so one build surfaces every missing or empty
-    // variable, not one per fix-rebuild cycle. Each failure gets its own `error:` line
-    // (one issue each in Xcode); a missing one also gets its typo-hunting note.
-    var resolved: [(name: String, value: String)] = []
-    var failures: [ConfigError] = []
-    for secret in secrets {
-        // Ahead of resolution so it also explains a value overridden to "" that then fails.
-        if captured.overriddenKeys.contains(secret.envVar) {
-            // Never print either value — only that the file's copy lost.
-            emit(
-                "warning: \(secret.envVar) from the build environment overrides the different value "
-                    + "\(envFileURL.path) exports; if the file is current, restart the terminal "
-                    + "or Xcode session that launched this build"
-            )
-        }
-        do {
-            resolved.append(try resolveSecret(secret, environment: environment))
-        } catch {
-            if case .missingEnvironmentVariable = error {
-                emit("note: \(missingEnvVarDiagnostic(envVar: secret.envVar, environment: environment))")
-            }
-            emit(error.diagnostic)
-            failures.append(error)
-        }
-    }
-    if failures.contains(where: { if case .missingEnvironmentVariable = $0 { true } else { false } }) {
-        emit("note: set the missing variable(s) in your shell, ~/.zshenv (for Xcode.app), or your CI environment")
-    }
-    if failures.contains(where: { if case .emptyEnvironmentVariable = $0 { true } else { false } }) {
-        // Inside the build sandbox a `$(security …)` or `$(op read …)` export fails with
-        // status 0 and yields "", which would otherwise ship an empty API key.
-        emit(
-            "note: an empty value usually comes from a leftover `export KEY=` or a `$(…)` substitution "
-                + "in the env file that failed inside the build sandbox; use a literal value, or append '?' "
-                + "to the variable's name in Secrets.yml (`KEY?`) if empty is intended"
-        )
-    }
-    if !failures.isEmpty {
-        return false
-    }
-
-    let output = Data(renderSecretsEnum(resolved, environment: envName, access: configFile.access).utf8)
     let outputURL = URL(fileURLWithPath: outputPath)
     if let existing = try? Data(contentsOf: outputURL), existing == output {
         return true
@@ -1281,4 +1489,110 @@ public func generateSecretsFile(
         return false
     }
     return true
+}
+
+// MARK: - Check command
+
+/// Checks one target's config the way a build would, without writing anything, and
+/// reports the result for the `tightlip-check` command.
+///
+/// Emits the diagnostics a build would print (see
+/// ``evaluateSecretsConfig(configPath:forwardedEnvironmentPath:processEnvironment:homeDirectory:emit:)``),
+/// then a report: the selected section and why, the env file, each declared variable's
+/// state and source, and whether a build would succeed. No value is ever emitted.
+///
+/// - Parameters:
+///   - configPath: Path to `Secrets.yml`.
+///   - displayName: The target's name, for the report's first line.
+///   - processEnvironment: The environment the check was launched in. Only the part a
+///     `swiftbuild` build launched from it would hand the build tool is used (see
+///     `buildToolNames`), and the env file is sourced from that part alone.
+///   - homeDirectory: Directory a leading `~/` in the env file path expands to.
+///   - emit: Receives each output line.
+/// - Returns: `false` exactly when a build would fail at the Lipservice step.
+public func checkSecretsConfig(
+    configPath: String,
+    displayName: String,
+    processEnvironment: [String: String],
+    homeDirectory: URL,
+    emit: (String) -> Void
+) -> Bool {
+    emit("Checking \(displayName) (\(configPath))")
+    let evaluation = evaluate(
+        configPath: configPath,
+        forwardedEnvironmentPath: nil,
+        processEnvironment: processEnvironment,
+        homeDirectory: homeDirectory,
+        emit: emit,
+        keeping: buildToolNames
+    )
+    if let evaluation {
+        emit("environment: \(describe(evaluation.selection))")
+        let found = FileManager.default.fileExists(atPath: evaluation.envFile.path)
+        emit("env file: \(evaluation.envFile.path)\(found ? "" : " (not found)")")
+        if !evaluation.variables.isEmpty {
+            emit("variables:")
+        }
+        for variable in evaluation.variables {
+            emit("  \(variable.secret.envVar) (Secrets.\(variable.secret.name)): \(describe(variable))")
+        }
+    }
+    let succeeded = evaluation?.succeeded ?? false
+    emit("result: a build would \(succeeded ? "succeed" : "fail")")
+    return succeeded
+}
+
+/// The variables a `swiftbuild` build passes from the environment it was launched in to
+/// the build tool.
+///
+/// SwiftPM's `swiftbuild` backend, the default since Swift 6.4, runs the tool in a
+/// synthesized environment that keeps `HOME` and `PATH` but drops the caller's other
+/// variables. The Lipservice plugin forwards the rest of what the tool needs: every
+/// variable the config names, in any section, plus `TIGHTLIP_ENV`. `CONFIGURATION`
+/// stands in for the build setting of that name, which the synthesized environment sets
+/// from `-c`; with no build to read it from, the check takes it from the caller.
+///
+/// The native backend passes the caller's whole environment, so an env file that reads a
+/// variable outside this set can pass there and still fail under `swiftbuild`. The check
+/// follows the stricter backend.
+private func buildToolNames(_ config: ParsedConfigFile) -> Set<String> {
+    let declared: [ParsedSecret]
+    switch config.secrets {
+    case .flat(let secrets): declared = secrets
+    case .sectioned(let sections): declared = sections.flatMap(\.secrets)
+    }
+    return Set(declared.map(\.envVar)).union(["TIGHTLIP_ENV", "CONFIGURATION", "HOME", "PATH"])
+}
+
+private func describe(_ selection: SecretsEvaluation.Selection) -> String {
+    switch selection {
+    case .flat:
+        return "none (flat config)"
+    case .selected(.tightlipEnv(let section)):
+        return "\(section) (TIGHTLIP_ENV)"
+    case .selected(.inferred(let section, let configuration, let debugSection, let releaseSection)):
+        let rule =
+            configuration.map { "inferred from CONFIGURATION=\($0)" }
+            ?? "CONFIGURATION is unset, which infers the same section as Debug"
+        return "\(section) (\(rule); Debug selects '\(debugSection)', Release selects '\(releaseSection)')"
+    case .undetermined(.indeterminateEnvironment(_, let reason)):
+        return "cannot determine (\(reason))"
+    case .undetermined(let error):
+        return "cannot determine (\(error.message))"
+    }
+}
+
+private func describe(_ variable: VariableStatus) -> String {
+    let state =
+        switch variable.state {
+        case .set: "set"
+        case .setButEmptyAllowed: "set but empty (allowed)"
+        case .setButEmpty: "set but empty"
+        case .missing: "missing"
+        }
+    switch variable.source {
+    case .envFile: return "\(state), from the env file"
+    case .buildEnvironment: return "\(state), from the build environment"
+    case nil: return state
+    }
 }

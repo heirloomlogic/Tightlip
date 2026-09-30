@@ -37,6 +37,8 @@ Test lanes almost never exercise the secret at runtime — they just need *somet
 
 CI runners have no `~/.zshenv`, so these values come straight from the job's environment with no shell sourcing involved. The plugin forwards every variable `Secrets.yml` names, plus `TIGHTLIP_ENV`, to the tool, so a job's `env:` block also works under SwiftPM's default `swiftbuild` backend (Swift 6.4+), which runs build commands in a synthesized environment. See <doc:EnvironmentSourcing>.
 
+To catch a missing variable before the build starts, run `swift package tightlip-check` as an earlier step in the same job. It exits non-zero when the build would fail and lists each variable the job is missing. See <doc:CheckingConfig>.
+
 Forwarded values are tracked like files: a build that reuses a build directory with a different `TIGHTLIP_ENV` or secret value regenerates, with no clean step. If you cache the build directory (`.build`, DerivedData) between jobs, the cache holds your secrets — see <doc:Obfuscation>.
 
 ## Don't pass `-sdk iphonesimulator` — use `-destination` alone
@@ -78,6 +80,7 @@ The real Tightlip error — the line that tells you what to fix — lives in `ra
 
 ## See Also
 
+- <doc:CheckingConfig>
 - <doc:Troubleshooting>
 - <doc:EnvironmentSourcing>
 - <doc:EnvironmentSelection>

@@ -25,7 +25,7 @@ Flat configs have no environment concept and ignore all of this. An empty `TIGHT
 
 In Xcode, `TIGHTLIP_ENV` reaches the plugin as a user-defined build setting, as a build-setting argument to `xcodebuild` (`xcodebuild … TIGHTLIP_ENV=production`), or through the environment of the process that launches `xcodebuild`. Scheme environment variables (the Run action's Environment Variables) don't work: they apply to running the app, not to building it.
 
-> Warning: Under SwiftPM's native build system (`--build-system native`, deprecated, and the default before Swift 6.4), `swift build -c release` does **not** set `CONFIGURATION`, so inference resolves to the *non*-production section — a release binary with staging keys. The default `swiftbuild` backend sets `CONFIGURATION` to `Release` or `Debug` to match `-c`, as Xcode and `xcodebuild` do. Either way, set `TIGHTLIP_ENV=production` explicitly on release lanes. The build log's `note: using environment '…'` line tells you what was picked.
+> Warning: Under SwiftPM's native build system (`--build-system native`, deprecated, and the default before Swift 6.4), `swift build -c release` does **not** set `CONFIGURATION`, so inference resolves to the *non*-production section — a release binary with staging keys. The default `swiftbuild` backend sets `CONFIGURATION` to `Release` or `Debug` to match `-c`, as Xcode and `xcodebuild` do. Either way, set `TIGHTLIP_ENV=production` explicitly on release lanes. The build log's `note: using environment '…'` line tells you what was picked, and `swift package tightlip-check` reports the section and the rule that picked it without building (<doc:CheckingConfig>).
 
 ## Why `TIGHTLIP_ENV` Wins
 

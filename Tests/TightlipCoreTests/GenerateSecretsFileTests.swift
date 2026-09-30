@@ -8,7 +8,7 @@ import TightlipCore
 @Suite("generateSecretsFile")
 struct GenerateSecretsFileTests {
     @Test func writesDecodableOutputAndSucceeds() throws {
-        let run = try Run(config: "apiKey: TIGHTLIP_GEN_KEY")
+        let run = try ScratchTarget(config: "apiKey: TIGHTLIP_GEN_KEY")
         let result = run.generate(processEnvironment: ["TIGHTLIP_GEN_KEY": "v"])
         #expect(result.succeeded)
         #expect(result.lines.isEmpty, "unexpected output: \(result.lines)")
@@ -16,7 +16,7 @@ struct GenerateSecretsFileTests {
     }
 
     @Test func reportsEveryMissingVariableThenGuidanceOnce() throws {
-        let run = try Run(config: "a: TIGHTLIP_GEN_A\nb: TIGHTLIP_GEN_B\nc: TIGHTLIP_GEN_C")
+        let run = try ScratchTarget(config: "a: TIGHTLIP_GEN_A\nb: TIGHTLIP_GEN_B\nc: TIGHTLIP_GEN_C")
         let result = run.generate(processEnvironment: ["TIGHTLIP_GEN_B": "set"])
         #expect(!result.succeeded)
         #expect(
@@ -30,7 +30,7 @@ struct GenerateSecretsFileTests {
     }
 
     @Test func emptyValueIsAnError() throws {
-        let run = try Run(config: "apiKey: TIGHTLIP_GEN_KEY")
+        let run = try ScratchTarget(config: "apiKey: TIGHTLIP_GEN_KEY")
         let result = run.generate(processEnvironment: ["TIGHTLIP_GEN_KEY": ""])
         #expect(!result.succeeded)
         #expect(
@@ -44,7 +44,7 @@ struct GenerateSecretsFileTests {
     }
 
     @Test func questionMarkAllowsEmptyValue() throws {
-        let run = try Run(config: "apiKey: TIGHTLIP_GEN_KEY?")
+        let run = try ScratchTarget(config: "apiKey: TIGHTLIP_GEN_KEY?")
         let result = run.generate(processEnvironment: ["TIGHTLIP_GEN_KEY": ""])
         #expect(result.succeeded, "output: \(result.lines)")
         #expect(result.lines.isEmpty, "unexpected output: \(result.lines)")
@@ -52,7 +52,7 @@ struct GenerateSecretsFileTests {
     }
 
     @Test func questionMarkDoesNotAllowUnset() throws {
-        let run = try Run(config: "apiKey: TIGHTLIP_GEN_KEY?")
+        let run = try ScratchTarget(config: "apiKey: TIGHTLIP_GEN_KEY?")
         let result = run.generate(processEnvironment: [:])
         #expect(!result.succeeded)
         #expect(
@@ -60,7 +60,7 @@ struct GenerateSecretsFileTests {
     }
 
     @Test func reportsEmptyAndMissingTogetherWithEachGuidanceOnce() throws {
-        let run = try Run(
+        let run = try ScratchTarget(
             config: "a: TIGHTLIP_GEN_A\nb: TIGHTLIP_GEN_B\nc: TIGHTLIP_GEN_C\nd: TIGHTLIP_GEN_D\ne: TIGHTLIP_GEN_E?")
         let result = run.generate(processEnvironment: [
             "TIGHTLIP_GEN_A": "", "TIGHTLIP_GEN_C": "", "TIGHTLIP_GEN_D": "set", "TIGHTLIP_GEN_E": "",
@@ -81,12 +81,12 @@ struct GenerateSecretsFileTests {
         let config = "staging:\n  k: TIGHTLIP_GEN_S?\nproduction:\n  k: TIGHTLIP_GEN_P"
         let environment = ["TIGHTLIP_GEN_S": "", "TIGHTLIP_GEN_P": ""]
 
-        let staging = try Run(config: config)
+        let staging = try ScratchTarget(config: config)
         let stagingResult = staging.generate(
             processEnvironment: environment.merging(["TIGHTLIP_ENV": "staging"]) { $1 })
         #expect(stagingResult.succeeded, "output: \(stagingResult.lines)")
 
-        let production = try Run(config: config)
+        let production = try ScratchTarget(config: config)
         let productionResult = production.generate(
             processEnvironment: environment.merging(["TIGHTLIP_ENV": "production"]) { $1 })
         #expect(!productionResult.succeeded)
@@ -97,7 +97,7 @@ struct GenerateSecretsFileTests {
     }
 
     @Test func parseErrorIsAttributedToTheConfigLine() throws {
-        let run = try Run(config: "apiKey: TIGHTLIP_GEN_KEY\n\tbad: X")
+        let run = try ScratchTarget(config: "apiKey: TIGHTLIP_GEN_KEY\n\tbad: X")
         let result = run.generate(processEnvironment: [:])
         #expect(!result.succeeded)
         #expect(result.lines.count == 1)
@@ -105,7 +105,7 @@ struct GenerateSecretsFileTests {
     }
 
     @Test func missingConfigSaysWhereItBelongs() throws {
-        let run = try Run(config: nil)
+        let run = try ScratchTarget(config: nil)
         let result = run.generate(processEnvironment: [:])
         #expect(!result.succeeded)
         #expect(result.errors.count == 1)
@@ -114,7 +114,7 @@ struct GenerateSecretsFileTests {
     }
 
     @Test func nonUTF8ConfigIsNamedAsSuch() throws {
-        let run = try Run(config: nil)
+        let run = try ScratchTarget(config: nil)
         try "apiKey: K".data(using: .utf16)!.write(to: run.configURL)
         let result = run.generate(processEnvironment: [:])
         #expect(!result.succeeded)
@@ -123,14 +123,14 @@ struct GenerateSecretsFileTests {
     }
 
     @Test func declaredButMissingEnvFileIsNoted() throws {
-        let run = try Run(config: "envFile: ./absent.env\napiKey: TIGHTLIP_GEN_KEY")
+        let run = try ScratchTarget(config: "envFile: ./absent.env\napiKey: TIGHTLIP_GEN_KEY")
         let result = run.generate(processEnvironment: ["TIGHTLIP_GEN_KEY": "v"])
         #expect(result.succeeded)
         #expect(result.lines.contains { $0.hasPrefix("note: declared envFile not found at ") })
     }
 
     @Test func envFileSuppliesValues() throws {
-        let run = try Run(config: "envFile: ./local.env\napiKey: TIGHTLIP_GEN_KEY")
+        let run = try ScratchTarget(config: "envFile: ./local.env\napiKey: TIGHTLIP_GEN_KEY")
         try "export TIGHTLIP_GEN_KEY=from-file\n".write(
             to: run.directory.appendingPathComponent("local.env"), atomically: true, encoding: .utf8)
         let result = run.generate(processEnvironment: [:])
@@ -139,7 +139,7 @@ struct GenerateSecretsFileTests {
     }
 
     @Test func accessDirectiveReachesTheOutputAheadOfEnvFile() throws {
-        let run = try Run(config: "access: public\nenvFile: ./local.env\napiKey: TIGHTLIP_GEN_KEY")
+        let run = try ScratchTarget(config: "access: public\nenvFile: ./local.env\napiKey: TIGHTLIP_GEN_KEY")
         try "export TIGHTLIP_GEN_KEY=from-file\n".write(
             to: run.directory.appendingPathComponent("local.env"), atomically: true, encoding: .utf8)
         let result = run.generate(processEnvironment: [:])
@@ -153,7 +153,7 @@ struct GenerateSecretsFileTests {
     @Test func forwardedEnvironmentReachesTheTool() throws {
         // SwiftPM's swiftbuild backend hands the tool a synthesized environment; the
         // plugin's forwarded file is how a CI job's variables get through.
-        let run = try Run(config: "apiKey: TIGHTLIP_GEN_KEY")
+        let run = try ScratchTarget(config: "apiKey: TIGHTLIP_GEN_KEY")
         try run.forward(["TIGHTLIP_GEN_KEY": "forwarded"])
         let result = run.generate(processEnvironment: ["UNRELATED": "x"])
         #expect(result.succeeded, "output: \(result.lines)")
@@ -161,7 +161,7 @@ struct GenerateSecretsFileTests {
     }
 
     @Test func processEnvironmentWinsOverForwarded() throws {
-        let run = try Run(config: "apiKey: TIGHTLIP_GEN_KEY")
+        let run = try ScratchTarget(config: "apiKey: TIGHTLIP_GEN_KEY")
         try run.forward(["TIGHTLIP_GEN_KEY": "forwarded"])
         let result = run.generate(processEnvironment: ["TIGHTLIP_GEN_KEY": "process"])
         #expect(result.succeeded)
@@ -169,7 +169,7 @@ struct GenerateSecretsFileTests {
     }
 
     @Test func forwardedTightlipEnvSelectsTheSection() throws {
-        let run = try Run(
+        let run = try ScratchTarget(
             config: "staging:\n  apiKey: TIGHTLIP_GEN_S\nproduction:\n  apiKey: TIGHTLIP_GEN_P")
         try run.forward(["TIGHTLIP_ENV": "production", "TIGHTLIP_GEN_P": "prod-value"])
         let result = run.generate(processEnvironment: ["CONFIGURATION": "Debug"])
@@ -181,7 +181,7 @@ struct GenerateSecretsFileTests {
     @Test func staleBuildEnvironmentValueIsWarnedWithoutPrintingValues() throws {
         // A terminal opened before the env file was edited still exports the old value,
         // which wins per key. Say so — but never print either value.
-        let run = try Run(config: "envFile: ./local.env\napiKey: TIGHTLIP_GEN_KEY")
+        let run = try ScratchTarget(config: "envFile: ./local.env\napiKey: TIGHTLIP_GEN_KEY")
         try "export TIGHTLIP_GEN_KEY=rotated-new\n".write(
             to: run.directory.appendingPathComponent("local.env"), atomically: true, encoding: .utf8)
         let result = run.generate(processEnvironment: ["TIGHTLIP_GEN_KEY": "revoked-old"])
@@ -194,7 +194,7 @@ struct GenerateSecretsFileTests {
 
     @Test func buildEnvironmentOverridingWithEmptyIsWarnedAndFails() throws {
         // The override warning explains where the empty value came from.
-        let run = try Run(config: "envFile: ./local.env\napiKey: TIGHTLIP_GEN_KEY")
+        let run = try ScratchTarget(config: "envFile: ./local.env\napiKey: TIGHTLIP_GEN_KEY")
         try "export TIGHTLIP_GEN_KEY=from-file\n".write(
             to: run.directory.appendingPathComponent("local.env"), atomically: true, encoding: .utf8)
         let result = run.generate(processEnvironment: ["TIGHTLIP_GEN_KEY": ""])
@@ -208,7 +208,7 @@ struct GenerateSecretsFileTests {
 
     @Test func overriddenTightlipEnvIsOnlyANote() throws {
         // Overriding the file's TIGHTLIP_ENV for one build is routine.
-        let run = try Run(
+        let run = try ScratchTarget(
             config: "envFile: ./local.env\nstaging:\n  k: TIGHTLIP_GEN_S\nproduction:\n  k: TIGHTLIP_GEN_P")
         try "export TIGHTLIP_ENV=staging\n".write(
             to: run.directory.appendingPathComponent("local.env"), atomically: true, encoding: .utf8)
@@ -222,7 +222,7 @@ struct GenerateSecretsFileTests {
     @Test func unchangedOutputIsNotRewritten() throws {
         // Xcode projects re-run build-tool commands on every build; rewriting an
         // identical file would recompile it every time.
-        let run = try Run(config: "apiKey: TIGHTLIP_GEN_KEY")
+        let run = try ScratchTarget(config: "apiKey: TIGHTLIP_GEN_KEY")
         #expect(run.generate(processEnvironment: ["TIGHTLIP_GEN_KEY": "v"]).succeeded)
         let before = try FileManager.default.attributesOfItem(atPath: run.outputURL.path)
         Thread.sleep(forTimeInterval: 0.05)
@@ -233,64 +233,5 @@ struct GenerateSecretsFileTests {
 
         #expect(run.generate(processEnvironment: ["TIGHTLIP_GEN_KEY": "changed"]).succeeded)
         #expect(try run.decoded("apiKey") == "changed")
-    }
-
-    // MARK: helpers
-
-    private final class Run {
-        let root: URL
-        let directory: URL
-        let home: URL
-        var configURL: URL { directory.appendingPathComponent("Secrets.yml") }
-        var outputURL: URL { directory.appendingPathComponent("Tightlip.swift") }
-        var forwardedURL: URL { directory.appendingPathComponent("forwarded-environment") }
-
-        init(config: String?) throws {
-            root = FileManager.default.temporaryDirectory
-                .appendingPathComponent("tightlip-generate-\(UUID().uuidString)")
-            directory = root.appendingPathComponent("target")
-            home = root.appendingPathComponent("home")
-            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-            try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
-            if let config {
-                try config.write(to: configURL, atomically: true, encoding: .utf8)
-            }
-        }
-
-        deinit {
-            try? FileManager.default.removeItem(at: root)
-        }
-
-        func forward(_ environment: [String: String]) throws {
-            var data = Data()
-            for (key, value) in environment {
-                data.append(Data("\(key)=\(value)".utf8))
-                data.append(0)
-            }
-            try data.write(to: forwardedURL)
-        }
-
-        func generate(processEnvironment: [String: String]) -> (succeeded: Bool, lines: [String], errors: [String]) {
-            var lines: [String] = []
-            let succeeded = generateSecretsFile(
-                configPath: configURL.path,
-                outputPath: outputURL.path,
-                forwardedEnvironmentPath: FileManager.default.fileExists(atPath: forwardedURL.path)
-                    ? forwardedURL.path : nil,
-                processEnvironment: processEnvironment,
-                homeDirectory: home,
-                emit: { lines.append($0) }
-            )
-            return (succeeded, lines, lines.filter { $0.hasPrefix("error: ") })
-        }
-
-        func output() throws -> String {
-            try String(contentsOf: outputURL, encoding: .utf8)
-        }
-
-        /// Decodes one property from the generated file with the salt it embeds.
-        func decoded(_ property: String) throws -> String {
-            try decodeGeneratedProperty(output(), propertyName: property)
-        }
     }
 }

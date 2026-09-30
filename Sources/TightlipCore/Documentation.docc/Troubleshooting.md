@@ -6,6 +6,8 @@ Symptom-to-fix table for the failure modes you'll hit integrating Tightlip.
 
 Every entry below is keyed on what you actually see in the build log. When a beautifier hides the real message, read <doc:ContinuousIntegration> first — the actionable error lives on the build phase's stderr, which `xcbeautify` and similar tools swallow.
 
+To reproduce a failure without building, run `swift package tightlip-check`. It prints the same diagnostics, the selected section, and the state of every declared variable. See <doc:CheckingConfig>.
+
 ## Build and resolution failures
 
 | Symptom | Cause | Fix |
