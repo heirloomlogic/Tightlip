@@ -12,7 +12,8 @@ struct Lipservice: BuildToolPlugin {
                 configURL: sourceTarget.directoryURL.appending(path: "Secrets.yml"),
                 workDirectory: context.pluginWorkDirectoryURL,
                 displayName: target.name,
-                resources: resourcePaths(sourceTarget.sourceFiles)
+                resources: resourcePaths(sourceTarget.sourceFiles),
+                removalHint: "Drop it from the target's `resources:` and list it under `exclude:`"
             )
         ]
     }
@@ -33,7 +34,8 @@ extension Lipservice: XcodeBuildToolPlugin {
                 configURL: configURL,
                 workDirectory: context.pluginWorkDirectoryURL,
                 displayName: target.displayName,
-                resources: resourcePaths(target.inputFiles)
+                resources: resourcePaths(target.inputFiles),
+                removalHint: "Remove it from the target (File inspector → Target Membership)"
             )
         ]
     }
@@ -45,7 +47,8 @@ private func makeCommand(
     configURL: URL,
     workDirectory: URL,
     displayName: String,
-    resources: [String]
+    resources: [String],
+    removalHint: String
 ) -> Command {
     let outputURL = workDirectory.appending(path: "Tightlip.swift")
     var arguments = [configURL.path(percentEncoded: false), outputURL.path(percentEncoded: false)]
@@ -61,8 +64,7 @@ private func makeCommand(
     if isBundled(configURL.standardizedFileURL, resources: resources) {
         Diagnostics.warning(
             "Secrets.yml is copied into the \(displayName) bundle as a resource, exposing the "
-                + "environment variable names it declares. Remove it from the target "
-                + "(File inspector → Target Membership); the plugin reads it from disk.",
+                + "environment variable names it declares. \(removalHint); the plugin reads it from disk.",
             file: configURL.path(percentEncoded: false)
         )
     }
@@ -73,8 +75,8 @@ private func makeCommand(
             if isBundled(envFile, resources: resources) {
                 Diagnostics.error(
                     "\(envFile.lastPathComponent) is copied into the \(displayName) bundle as a resource, "
-                        + "which would ship its plaintext secrets. Remove it from the target "
-                        + "(File inspector → Target Membership) or move it outside the target's folder.",
+                        + "which would ship its plaintext secrets. \(removalHint), "
+                        + "or move it outside the target's folder.",
                     file: envFile.path(percentEncoded: false)
                 )
             }
