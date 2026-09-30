@@ -1536,6 +1536,13 @@ public func checkSecretsConfig(
         for variable in evaluation.variables {
             emit("  \(variable.secret.envVar) (Secrets.\(variable.secret.name)): \(describe(variable))")
         }
+        if evaluation.variables.contains(where: { $0.state == .setButEmpty && $0.source == .envFile }) {
+            emit(
+                "note: a build also passes the env file its build settings, such as SRCROOT and PROJECT_DIR; "
+                    + "the check has none, so a value that reads one is empty here even if a build finds it. "
+                    + "To read a file beside the env file, use \"${0:a:h}/name\" instead of \"$SRCROOT/…\""
+            )
+        }
     }
     let succeeded = evaluation?.succeeded ?? false
     emit("result: a build would \(succeeded ? "succeed" : "fail")")
@@ -1551,6 +1558,11 @@ public func checkSecretsConfig(
 /// variable the config names, in any section, plus `TIGHTLIP_ENV`. `CONFIGURATION`
 /// stands in for the build setting of that name, which the synthesized environment sets
 /// from `-c`; with no build to read it from, the check takes it from the caller.
+///
+/// The synthesized environment also carries the build settings (`SRCROOT`,
+/// `PROJECT_DIR`, and several hundred more). A command plugin has no build to take them
+/// from, so an env file that reads one resolves it to "" here and the check reports a
+/// failure the build may not have.
 ///
 /// The native backend passes the caller's whole environment, so an env file that reads a
 /// variable outside this set can pass there and still fail under `swiftbuild`. The check
