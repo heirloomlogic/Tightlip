@@ -331,6 +331,60 @@ struct CheckSecretsConfigTests {
             ])
     }
 
+    /// A build also hands the tool its build settings (`SRCROOT`, `PROJECT_DIR`, …). The
+    /// check has no build to take them from, so it still fails an env file that reads one,
+    /// even when the caller exports it, and says why.
+    @Test func envFileThatReadsABuildSettingFailsWithANote() throws {
+        let run = try ScratchTarget(
+            config: "envFile: ./secrets.env\nkey: TIGHTLIP_CHECK_KEY",
+            envFile: "export TIGHTLIP_CHECK_KEY=\"$(cat \"$SRCROOT/key.txt\")\"\n"
+        )
+        try "key-value\n".write(to: run.directory.appendingPathComponent("key.txt"), atomically: true, encoding: .utf8)
+
+        let result = run.check(processEnvironment: ["SRCROOT": run.directory.path])
+        #expect(!result.succeeded)
+        #expect(result.lines.contains("  TIGHTLIP_CHECK_KEY (Secrets.key): set but empty, from the env file"))
+        // Part of the report, after the variables, not among the build's diagnostics.
+        let note = try #require(result.lines.firstIndex(where: Self.isBuildSettingsNote), "output: \(result.lines)")
+        #expect(result.lines[note + 1] == "result: a build would fail")
+    }
+
+    @Test func buildSettingsNoteIsLeftOutWhenNoEnvFileValueIsEmpty() throws {
+        let emptyFromBuild = try ScratchTarget(config: "key: TIGHTLIP_CHECK_KEY")
+        let fromBuild = emptyFromBuild.check(processEnvironment: ["TIGHTLIP_CHECK_KEY": ""])
+        #expect(!fromBuild.succeeded)
+        #expect(!fromBuild.lines.contains(where: Self.isBuildSettingsNote))
+
+        let allowed = try ScratchTarget(
+            config: "envFile: ./secrets.env\nkey: TIGHTLIP_CHECK_KEY?",
+            envFile: "export TIGHTLIP_CHECK_KEY=\n"
+        )
+        let allowedResult = allowed.check(processEnvironment: [:])
+        #expect(allowedResult.succeeded)
+        #expect(!allowedResult.lines.contains(where: Self.isBuildSettingsNote))
+
+        let missing = try ScratchTarget(config: "envFile: ./secrets.env\nkey: TIGHTLIP_CHECK_KEY", envFile: "")
+        #expect(!missing.check(processEnvironment: [:]).lines.contains(where: Self.isBuildSettingsNote))
+    }
+
+    /// The alternative the note and the docs recommend: `${0:a:h}` is the directory of the
+    /// sourced file, so it resolves in the check as it does in a build.
+    @Test func envFileDirectoryResolvesInTheCheck() throws {
+        let run = try ScratchTarget(
+            config: "envFile: ./secrets.env\nkey: TIGHTLIP_CHECK_KEY",
+            envFile: "export TIGHTLIP_CHECK_KEY=\"$(cat \"${0:a:h}/key.txt\")\"\n"
+        )
+        try "key-value\n".write(to: run.directory.appendingPathComponent("key.txt"), atomically: true, encoding: .utf8)
+        let result = run.check(processEnvironment: [:])
+        #expect(result.succeeded, "output: \(result.lines)")
+        #expect(result.lines.contains("  TIGHTLIP_CHECK_KEY (Secrets.key): set, from the env file"))
+        #expect(!result.lines.contains(where: Self.isBuildSettingsNote))
+    }
+
+    private static func isBuildSettingsNote(_ line: String) -> Bool {
+        line.hasPrefix("note: a build also passes the env file its build settings")
+    }
+
     // MARK: helpers
 
     private struct Row: Equatable, CustomStringConvertible {

@@ -110,6 +110,7 @@ jobs:
           fi
           printf '%s\n' "$out"
           grep -qxF '  TIGHTLIP_DEMO_KEY (Secrets.demoKey): set but empty, from the env file' <<<"$out"
+          grep -qF 'note: a build also passes the env file its build settings, such as SRCROOT' <<<"$out"
 
   # A separate job because swiftbuild keeps its own build tree: in the job above it
   # would rebuild the tool and TightlipCore serially after the native steps.
