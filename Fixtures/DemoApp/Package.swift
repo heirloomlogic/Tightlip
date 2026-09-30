@@ -18,7 +18,14 @@ let package = Package(
     targets: [
         .executableTarget(
             name: "DemoApp",
+            // The env file is plugin input, not a source; excluding it silences
+            // SwiftPM's "unhandled file" warning.
+            exclude: ["secrets.env"],
             plugins: [.plugin(name: "Lipservice", package: "Tightlip")]
-        )
+        ),
+        .executableTarget(
+            name: "SectionedDemo",
+            plugins: [.plugin(name: "Lipservice", package: "Tightlip")]
+        ),
     ]
 )

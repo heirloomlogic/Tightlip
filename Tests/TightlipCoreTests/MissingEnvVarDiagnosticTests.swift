@@ -19,6 +19,15 @@ struct MissingEnvVarDiagnosticTests {
         #expect(note.contains("[]"))
     }
 
+    @Test func leadingUnderscoreStaysInThePrefix() {
+        let note = missingEnvVarDiagnostic(
+            envVar: "_ACME_KEY",
+            environment: ["_ACME_KEY2": "x", "ACME_OTHER": "y"]
+        )
+        #expect(note.contains("prefix '_ACME_'"))
+        #expect(note.contains("[_ACME_KEY2]"))
+    }
+
     @Test func handlesEnvVarWithoutUnderscore() {
         let note = missingEnvVarDiagnostic(envVar: "APIKEY", environment: ["APIKEY_SIBLING": "x"])
         #expect(note.contains("prefix 'APIKEY_'"))

@@ -99,7 +99,7 @@ struct ParseSectionedConfigTests {
             prod:
               apiKey: P_KEY
             """
-        expectParseError(text, line: nil, reasonContains: "differs from")
+        expectParseError(text, line: 4, reasonContains: "differs from")
     }
 
     @Test func mismatchedSectionKeysReportsMissingKey() {
@@ -110,7 +110,7 @@ struct ParseSectionedConfigTests {
             prod:
               apiKey: P_KEY
             """
-        expectParseError(text, line: nil, reasonContains: "missing extra")
+        expectParseError(text, line: 4, reasonContains: "missing extra")
     }
 
     @Test func mismatchedSectionKeysReportsUnexpectedKey() {
@@ -121,7 +121,7 @@ struct ParseSectionedConfigTests {
               apiKey: P_KEY
               bonus: P_BONUS
             """
-        expectParseError(text, line: nil, reasonContains: "unexpected bonus")
+        expectParseError(text, line: 3, reasonContains: "unexpected bonus")
     }
 
     @Test func duplicateSectionNameIsError() {
@@ -131,7 +131,7 @@ struct ParseSectionedConfigTests {
             staging:
               key: B
             """
-        expectParseError(text, line: 3, reasonContains: "duplicate section")
+        expectParseError(text, line: 3, reasonContains: "duplicate section 'staging' (first defined on line 1)")
     }
 
     @Test func emptySectionIsError() {
@@ -140,7 +140,13 @@ struct ParseSectionedConfigTests {
             prod:
               key: P
             """
-        expectParseError(text, line: 2, reasonContains: "no secrets")
+        // Points at the empty section's own header, not the next one.
+        expectParseError(text, line: 1, reasonContains: "no secrets")
+    }
+
+    @Test func emptyLastSectionPointsAtItsHeader() {
+        let text = "staging:\n  key: S\n\nprod:\n"
+        expectParseError(text, line: 4, reasonContains: "section 'prod' has no secrets")
     }
 
     @Test func wrongIndentIsError() {

@@ -141,6 +141,31 @@ struct ParseEnvFileFieldTests {
         }
     }
 
+    @Test(arguments: [
+        ("~", "not a directory"),
+        ("./configs/", "not a directory"),
+        ("\"./x.env\"", "written bare"),
+        ("'./x.env'", "written bare"),
+        ("$HOME/x.env", "written bare"),
+        ("`pwd`/x.env", "written bare"),
+        ("~root/x.env", "'~user'"),
+    ])
+    func unusableDirectiveValueIsParseError(value: String, reasonContains: String) throws {
+        // Each of these would otherwise resolve to a directory (sourced as a silent
+        // no-op) or to a literal path that never exists.
+        do {
+            _ = try parseYAMLConfigFile("envFile: \(value)\nfoo: BAR", path: "t.yml")
+            Issue.record("expected parse error for \(value)")
+        } catch {
+            guard case .parse(_, let line, let reason) = error else {
+                Issue.record("expected .parse, got \(error)")
+                return
+            }
+            #expect(line == 1)
+            #expect(reason.contains(reasonContains), "reason was: \(reason)")
+        }
+    }
+
     @Test func envFileAsSecretNameIsParseError() throws {
         // Only the first meaningful line is directive position; anywhere else,
         // `envFile` as a property name is reserved to keep the config unambiguous.
@@ -194,18 +219,16 @@ struct ParseEnvFileFieldTests {
             configDir: configDir,
             homeDirectory: URL(fileURLWithPath: "/Users/test")
         )
-        // appendingPathComponent doesn't collapse '..'; just verify it's relative-joined.
-        #expect(result.path.hasPrefix("/Users/test/proj/Target/"))
-        #expect(result.path.hasSuffix("shared.env"))
+        // Standardized, so the plugin's input tracking and the tool agree on one path.
+        #expect(result.path == "/Users/test/proj/shared.env")
     }
 
-    @Test func resolveEnvFilePathBareTilde() {
-        let home = URL(fileURLWithPath: "/Users/test")
+    @Test func resolveEnvFilePathCollapsesDoubledSlashes() {
         let result = resolveEnvFilePath(
-            "~",
+            "~//.zshenv",
             configDir: URL(fileURLWithPath: "/x"),
-            homeDirectory: home
+            homeDirectory: URL(fileURLWithPath: "/Users/test")
         )
-        #expect(result.path == "/Users/test")
+        #expect(result.path == "/Users/test/.zshenv")
     }
 }

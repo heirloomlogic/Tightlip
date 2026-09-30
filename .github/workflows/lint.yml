@@ -59,4 +59,4 @@ jobs:
       # swift-format`: there is no Xcode here, and `xcrun` reaches for the macOS
       # toolchain.
       - name: Lint (strict)
-        run: swift-format lint --strict --parallel --recursive --configuration .swift-format Sources Tests
+        run: swift-format lint --strict --parallel --recursive --configuration .swift-format Sources Tests Plugins Fixtures

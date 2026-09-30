@@ -46,6 +46,7 @@ jobs:
           touch .dev-tooling
           swift package --allow-writing-to-directory ./docs \
             generate-documentation --target TightlipCore \
+            --warnings-as-errors \
             --disable-indexing \
             --transform-for-static-hosting \
             --hosting-base-path /Tightlip \

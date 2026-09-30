@@ -25,6 +25,9 @@ Two properties of the design deserve explicit attention when reviewing changes t
 - **`Secrets.yml` chooses which environment variables get embedded in the build product.** A pull request that edits `Secrets.yml` to map a property onto a CI credential (say, `key: AWS_SECRET_ACCESS_KEY`) exfiltrates that credential through the built artifact itself — no code execution or network access required. Review `Secrets.yml` diffs with the same care as code, and build untrusted pull requests with a minimal environment.
 - **The `envFile:` directive names a file that is executed (shell-sourced) at build time.** Inside SwiftPM's plugin sandbox this is no more power than any build-tool plugin already has, but builds run with `--disable-sandbox` (a common workaround on some CI images) turn a repository-controlled `envFile: ./x.sh` into unsandboxed shell execution. Don't disable the sandbox when building repositories you don't trust.
 
+- **Project-local files can ship inside the app.** Xcode's synchronized folders copy every non-source file in a target's folder into the built bundle, which would include `Secrets.yml` (env-var names) and a project-local env file (plaintext values). The plugin fails the build when the env file is a bundle resource and warns for `Secrets.yml`; clear their Target Membership.
+- **The build directory holds secrets.** The generated `Tightlip.swift` stores each value XOR-encoded against a salt in the same file, and the plugin's `forwarded-environment` file (mode 0600, in the plugin work directory) stores, in plaintext, the values of the variables every section declares — the plugin can't know which section the tool will select — so they reach the tool on build systems that don't pass the environment through. Treat DerivedData, `.build`, and any CI cache of them as secret-bearing.
+
 Plausible in-scope security issues:
 
 - Path traversal or arbitrary file read via `envFile:` directive

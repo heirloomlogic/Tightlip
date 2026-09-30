@@ -87,7 +87,26 @@ struct ParseYAMLConfigFlatTests {
     }
 
     @Test func nbspIndentIsParseErrorOnLine1() {
-        expectParseError("\u{00A0}foo: BAR", line: 1, reasonContains: "indentation")
+        expectParseError("\u{00A0}foo: BAR", line: 1, reasonContains: "U+00A0 NO-BREAK SPACE at column 1")
+    }
+
+    @Test func nbspBetweenColonAndValueIsNamedWithItsColumn() {
+        // Pasted from a chat app, this line looks exactly like `foo: BAR`; the error
+        // must say what is actually wrong instead of echoing the line back.
+        expectParseError("foo:\u{00A0}BAR", line: 1, reasonContains: "U+00A0 NO-BREAK SPACE at column 5")
+    }
+
+    @Test func zeroWidthSpaceIsParseError() {
+        expectParseError("foo: BAR\nbar:\u{200B} BAZ", line: 2, reasonContains: "U+200B")
+    }
+
+    @Test func carriageReturnOnlyLineEndingsAreNamed() {
+        expectParseError("foo: A\rbar: B", line: 1, reasonContains: "carriage return")
+    }
+
+    @Test func invisibleCharactersInCommentsAndBlankLinesAreAllowed() throws {
+        let result = try parseFlat("# note\u{00A0}with nbsp\n\u{00A0}\nfoo: BAR", path: "t.yml")
+        #expect(result == [ParsedSecret(name: "foo", envVar: "BAR")])
     }
 
     @Test func tabBetweenColonAndValueIsParseError() {
@@ -108,7 +127,7 @@ struct ParseYAMLConfigFlatTests {
         // "foo:" alone is now detected as a section header (sectioned format).
         // The error becomes "section 'foo' has no secrets" rather than a flat-format
         // parse error. Verify it still errors.
-        expectParseError("foo:", line: nil, reasonContains: "no secrets")
+        expectParseError("foo:", line: 1, reasonContains: "no secrets")
     }
 
     @Test func missingColonIsParseError() {
@@ -144,7 +163,7 @@ struct ParseYAMLConfigFlatTests {
         expectParseError("\(keyword): APP_VALUE", line: 1, reasonContains: "Swift keyword")
     }
 
-    @Test(arguments: ["salt", "decode"])
+    @Test(arguments: ["salt", "decode", "Swift", "Foundation"])
     func generatedHelperNameAsSecretNameIsParseError(name: String) {
         expectParseError("\(name): APP_VALUE", line: 1, reasonContains: "reserved")
     }
@@ -156,11 +175,12 @@ struct ParseYAMLConfigFlatTests {
         expectParseError("\(name): APP_VALUE", line: 1, reasonContains: "member")
     }
 
-    @Test(arguments: ["Data", "String", "UInt8", "UTF8", "fatalError"])
-    func decodeShimSymbolAsSecretNameIsParseError(name: String) {
-        // A member with one of these names shadows a symbol the generated decode
-        // shim references, breaking compilation of the generated file.
-        expectParseError("\(name): APP_VALUE", line: 1, reasonContains: "reserved")
+    @Test(arguments: ["Data", "String", "UInt8", "UTF8", "fatalError", "open"])
+    func namesTheShimNoLongerCollidesWithAreAllowed(name: String) throws {
+        // The shim spells library symbols module-qualified, so these compile as members
+        // (GeneratedCodeIntegrationTests proves it); `open` is a contextual keyword.
+        let result = try parseFlat("\(name): APP_VALUE", path: "t.yml")
+        #expect(result == [ParsedSecret(name: name, envVar: "APP_VALUE")])
     }
 
     @Test func swiftKeywordAsEnvVarNameIsAllowed() throws {
@@ -181,6 +201,28 @@ struct ParseYAMLConfigFlatTests {
         } catch {
             #expect(error.message.hasPrefix("Secrets.yml"))
         }
+    }
+
+    @Test func parseDiagnosticUsesXcodeAttributableForm() {
+        // `path:line: error: reason` is what Xcode turns into a clickable issue on the
+        // offending line; `error: path:line: reason` renders as unattributed text.
+        do {
+            _ = try parseYAMLConfig("foo: BAR\n\tbad: X", path: "/p/Secrets.yml")
+            Issue.record("expected throw")
+        } catch {
+            #expect(error.diagnostic.hasPrefix("/p/Secrets.yml:2: error: "))
+        }
+        do {
+            _ = try parseYAMLConfig("", path: "/p/Secrets.yml")
+            Issue.record("expected throw")
+        } catch {
+            #expect(error.diagnostic == "/p/Secrets.yml: error: no secrets declared")
+        }
+    }
+
+    @Test func nonParseDiagnosticsKeepTheErrorPrefix() {
+        let error = ConfigError.missingEnvironmentVariable(envVar: "K", property: "Secrets.k")
+        #expect(error.diagnostic == "error: environment variable K must be set to generate Secrets.k")
     }
 
     @Test func parseLineAppearsInFormattedMessage() {
