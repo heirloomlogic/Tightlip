@@ -27,6 +27,17 @@ production:
 
 The active section is chosen at build time. For the rules — `TIGHTLIP_ENV`, Xcode `CONFIGURATION`, the auto-inference behavior — see <doc:EnvironmentSelection>.
 
+A `?` after an env-var name allows that variable to be set to the empty string. It applies to one line, so each section decides for itself:
+
+```yaml
+staging:
+  analyticsKey: STAGING_ANALYTICS_KEY?
+production:
+  analyticsKey: PROD_ANALYTICS_KEY
+```
+
+Here an empty `STAGING_ANALYTICS_KEY` builds, and an empty `PROD_ANALYTICS_KEY` fails the build. Both must still be set.
+
 When a value is identical across environments, point the property at the **same** env var in every section. That's valid — the developer exports one variable, and the resolved section still picks it up. Only the values that genuinely differ need per-environment variables.
 
 ## Naming Convention for Env Vars

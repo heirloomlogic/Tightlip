@@ -6,13 +6,19 @@ public struct ParsedSecret: Equatable, Sendable {
     /// The Swift property name emitted on the generated `Secrets` enum.
     public let name: String
 
-    /// The environment variable the build tool reads for this secret's value.
+    /// The environment variable the build tool reads for this secret's value, without
+    /// the `?` marker.
     public let envVar: String
 
+    /// Whether the variable may be set to the empty string, written as a `?` after its
+    /// name (`apiKey: APP_KEY?`). An unset variable is an error either way.
+    public let allowsEmpty: Bool
+
     /// Creates a parsed secret. Normally produced by ``parseYAMLConfig(_:path:)``.
-    public init(name: String, envVar: String) {
+    public init(name: String, envVar: String, allowsEmpty: Bool = false) {
         self.name = name
         self.envVar = envVar
+        self.allowsEmpty = allowsEmpty
     }
 }
 
@@ -64,6 +70,10 @@ public enum ConfigError: Error, Equatable, Sendable {
     /// A declared secret's environment variable was not set when the build tool ran.
     case missingEnvironmentVariable(envVar: String, property: String)
 
+    /// A declared secret's environment variable was set to the empty string, and its
+    /// config line has no `?` marker allowing that.
+    case emptyEnvironmentVariable(envVar: String, property: String)
+
     /// The active environment could not be determined for a sectioned config.
     case indeterminateEnvironment(available: [String], reason: String)
 
@@ -76,6 +86,8 @@ public enum ConfigError: Error, Equatable, Sendable {
             // One line per variable so each renders as its own issue in Xcode; the
             // tool prints the "set it in your shell / ~/.zshenv / CI" guidance once.
             return "environment variable \(envVar) must be set to generate \(property)"
+        case .emptyEnvironmentVariable(let envVar, let property):
+            return "environment variable \(envVar) is set but empty; \(property) needs a value"
         case .indeterminateEnvironment(let available, let reason):
             return """
                 cannot determine environment: \(reason). \
@@ -94,7 +106,7 @@ public enum ConfigError: Error, Equatable, Sendable {
         switch self {
         case .parse(let path, let line, let reason):
             return "\(Self.location(path: path, line: line)): error: \(reason)"
-        case .missingEnvironmentVariable, .indeterminateEnvironment:
+        case .missingEnvironmentVariable, .emptyEnvironmentVariable, .indeterminateEnvironment:
             return "error: \(message)"
         }
     }
@@ -231,7 +243,8 @@ private func extractEnvFileDirective(
                 reason: "only a leading '~/' is expanded in an envFile path; '~user' paths are not supported"
             )
         }
-        if isIdentifier(value) {
+        // `KEY?` reads as a mapping just as much as `KEY` does.
+        if parseEnvVarReference(value[...]) != nil {
             throw .parse(
                 path: path,
                 line: lineNumber,
@@ -309,25 +322,25 @@ private func parseFlat(_ lines: [String], path: String) throws(ConfigError) -> [
             )
         }
 
-        guard let (name, envVar) = splitMapping(stripped) else {
+        guard let secret = splitMapping(stripped) else {
             throw .parse(
                 path: path,
                 line: lineNumber,
                 reason: "expected '<name>: <ENV_VAR>', got '\(stripped)'"
             )
         }
-        if let reason = reservedNameReason(name) {
+        if let reason = reservedNameReason(secret.name) {
             throw .parse(path: path, line: lineNumber, reason: reason)
         }
-        if let prior = seen[name] {
+        if let prior = seen[secret.name] {
             throw .parse(
                 path: path,
                 line: lineNumber,
-                reason: "duplicate key '\(name)' (first defined on line \(prior))"
+                reason: "duplicate key '\(secret.name)' (first defined on line \(prior))"
             )
         }
-        seen[name] = lineNumber
-        result.append(ParsedSecret(name: name, envVar: envVar))
+        seen[secret.name] = lineNumber
+        result.append(secret)
     }
 
     if result.isEmpty {
@@ -402,25 +415,25 @@ private func parseSectioned(
                     reason: "use exactly 2-space indent inside environment sections"
                 )
             }
-            guard let (name, envVar) = splitMapping(stripped) else {
+            guard let secret = splitMapping(stripped) else {
                 throw .parse(
                     path: path,
                     line: lineNumber,
                     reason: "expected '  <name>: <ENV_VAR>', got '\(rawLine)'"
                 )
             }
-            if let reason = reservedNameReason(name) {
+            if let reason = reservedNameReason(secret.name) {
                 throw .parse(path: path, line: lineNumber, reason: reason)
             }
-            if let prior = seen[name] {
+            if let prior = seen[secret.name] {
                 throw .parse(
                     path: path,
                     line: lineNumber,
-                    reason: "duplicate key '\(name)' (first defined on line \(prior))"
+                    reason: "duplicate key '\(secret.name)' (first defined on line \(prior))"
                 )
             }
-            seen[name] = lineNumber
-            currentSecrets.append(ParsedSecret(name: name, envVar: envVar))
+            seen[secret.name] = lineNumber
+            currentSecrets.append(secret)
         }
     }
 
@@ -513,7 +526,10 @@ public func resolveEnvironment(
     )
 }
 
-private func splitMapping(_ s: String) -> (String, String)? {
+/// Splits a `name: ENV_VAR` or `name: ENV_VAR?` line into a secret, or returns nil if
+/// the line doesn't have that shape. Name-level checks (reserved names, duplicates) are
+/// the caller's.
+private func splitMapping(_ s: String) -> ParsedSecret? {
     guard let colonIdx = s.firstIndex(of: ":") else { return nil }
     let name = String(s[s.startIndex..<colonIdx])
     guard isIdentifier(name) else { return nil }
@@ -522,9 +538,19 @@ private func splitMapping(_ s: String) -> (String, String)? {
     while rest.first == " " { rest = rest.dropFirst() }
     while rest.last == " " { rest = rest.dropLast() }
 
-    let envVar = String(rest)
-    guard isIdentifier(envVar) else { return nil }
-    return (name, envVar)
+    guard let (envVar, allowsEmpty) = parseEnvVarReference(rest) else { return nil }
+    return ParsedSecret(name: name, envVar: envVar, allowsEmpty: allowsEmpty)
+}
+
+/// Parses the right side of a mapping: an identifier, optionally followed by the `?`
+/// marker that allows an empty value.
+///
+/// The Lipservice plugin duplicates this rule (`forwardedNames` in
+/// `Plugins/Lipservice/Lipservice.swift`) to forward each variable — keep both in sync.
+private func parseEnvVarReference(_ s: Substring) -> (envVar: String, allowsEmpty: Bool)? {
+    let allowsEmpty = s.last == "?"
+    let envVar = String(allowsEmpty ? s.dropLast() : s)
+    return isIdentifier(envVar) ? (envVar, allowsEmpty) : nil
 }
 
 /// Swift reserved keywords that are invalid as unescaped member declaration names.
@@ -591,24 +617,27 @@ private func isIdentifier(_ s: String) -> Bool {
 
 /// Resolves a single parsed secret against an environment dictionary.
 ///
-/// An env var set to the empty string counts as set — only an absent key triggers an
-/// error.
+/// An env var set to the empty string is an error unless the secret's config line marks
+/// it with `?` (``ParsedSecret/allowsEmpty``).
 ///
 /// - Parameters:
 ///   - parsed: The parsed secret to resolve.
 ///   - environment: Environment variables to look up in.
 /// - Returns: The secret's Swift property name paired with its resolved string value.
 /// - Throws: ``ConfigError/missingEnvironmentVariable(envVar:property:)`` when
-///   `parsed.envVar` is not a key in `environment`.
+///   `parsed.envVar` is not a key in `environment`, or
+///   ``ConfigError/emptyEnvironmentVariable(envVar:property:)`` when its value is empty
+///   and `parsed.allowsEmpty` is false.
 public func resolveSecret(
     _ parsed: ParsedSecret,
     environment: [String: String]
 ) throws(ConfigError) -> (name: String, value: String) {
+    let property = "Secrets.\(parsed.name)"
     guard let value = environment[parsed.envVar] else {
-        throw .missingEnvironmentVariable(
-            envVar: parsed.envVar,
-            property: "Secrets.\(parsed.name)"
-        )
+        throw .missingEnvironmentVariable(envVar: parsed.envVar, property: property)
+    }
+    if value.isEmpty, !parsed.allowsEmpty {
+        throw .emptyEnvironmentVariable(envVar: parsed.envVar, property: property)
     }
     return (name: parsed.name, value: value)
 }
@@ -1142,37 +1171,44 @@ public func generateSecretsFile(
         emit("note: using environment '\(envName)'")
     }
 
-    // Resolve every secret before failing so one build surfaces every missing variable,
-    // not one per fix-rebuild cycle. Each failure gets its own `error:` line (one issue
-    // each in Xcode) with its typo-hunting note.
+    // Resolve every secret before failing so one build surfaces every missing or empty
+    // variable, not one per fix-rebuild cycle. Each failure gets its own `error:` line
+    // (one issue each in Xcode); a missing one also gets its typo-hunting note.
     var resolved: [(name: String, value: String)] = []
-    var anyMissing = false
+    var failures: [ConfigError] = []
     for secret in secrets {
+        // Ahead of resolution so it also explains a value overridden to "" that then fails.
+        if captured.overriddenKeys.contains(secret.envVar) {
+            // Never print either value — only that the file's copy lost.
+            emit(
+                "warning: \(secret.envVar) from the build environment overrides the different value "
+                    + "\(envFileURL.path) exports; if the file is current, restart the terminal "
+                    + "or Xcode session that launched this build"
+            )
+        }
         do {
-            let entry = try resolveSecret(secret, environment: environment)
-            if captured.overriddenKeys.contains(secret.envVar) {
-                // Never print either value — only that the file's copy lost.
-                emit(
-                    "warning: \(secret.envVar) from the build environment overrides the different value "
-                        + "\(envFileURL.path) exports; if the file is current, restart the terminal "
-                        + "or Xcode session that launched this build"
-                )
-            }
-            if entry.value.isEmpty {
-                // A warning, not a note: inside the build sandbox a `$(security …)` or
-                // `$(op read …)` export fails with status 0 and yields "", and a note is
-                // easy to miss while an empty API key ships.
-                emit("warning: \(secret.envVar) is set but empty; Secrets.\(secret.name) will be \"\"")
-            }
-            resolved.append(entry)
+            resolved.append(try resolveSecret(secret, environment: environment))
         } catch {
-            emit("note: \(missingEnvVarDiagnostic(envVar: secret.envVar, environment: environment))")
+            if case .missingEnvironmentVariable = error {
+                emit("note: \(missingEnvVarDiagnostic(envVar: secret.envVar, environment: environment))")
+            }
             emit(error.diagnostic)
-            anyMissing = true
+            failures.append(error)
         }
     }
-    if anyMissing {
+    if failures.contains(where: { if case .missingEnvironmentVariable = $0 { true } else { false } }) {
         emit("note: set the missing variable(s) in your shell, ~/.zshenv (for Xcode.app), or your CI environment")
+    }
+    if failures.contains(where: { if case .emptyEnvironmentVariable = $0 { true } else { false } }) {
+        // Inside the build sandbox a `$(security …)` or `$(op read …)` export fails with
+        // status 0 and yields "", which would otherwise ship an empty API key.
+        emit(
+            "note: an empty value usually comes from a leftover `export KEY=` or a `$(…)` substitution "
+                + "in the env file that failed inside the build sandbox; use a literal value, or append '?' "
+                + "to the variable's name in Secrets.yml (`KEY?`) if empty is intended"
+        )
+    }
+    if !failures.isEmpty {
         return false
     }
 

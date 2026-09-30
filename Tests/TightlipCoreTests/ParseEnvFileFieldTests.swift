@@ -141,6 +141,18 @@ struct ParseEnvFileFieldTests {
         }
     }
 
+    @Test func optionalMarkedIdentifierDirectiveValueIsParseError() throws {
+        // `envFile: SOME_VAR?` reads as a mapping that allows an empty value just as
+        // much as `envFile: SOME_VAR` reads as a plain one.
+        do {
+            _ = try parseYAMLConfigFile("envFile: SOME_VAR?\nfoo: BAR", path: "t.yml")
+            Issue.record("expected parse error")
+        } catch {
+            #expect(error.message.contains("ambiguous"))
+            #expect(error.message.contains("'./SOME_VAR?'"))
+        }
+    }
+
     @Test(arguments: [
         ("~", "not a directory"),
         ("./configs/", "not a directory"),

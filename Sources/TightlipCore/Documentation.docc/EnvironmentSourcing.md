@@ -49,10 +49,10 @@ The capture is insulated from the rest of what an env file can do:
 
 ## Command Substitution Inside the Sandbox
 
-The capture subshell runs inside the build sandbox. The Keychain (`securityd`), the 1Password CLI, the network, SSH agent sockets, and writes under `~` are all unavailable to it. A line like `export KEY=$(security find-generic-password … -w)` or `export KEY=$(op read …)` works in your terminal, but during the build the substitution fails, `export` still exits 0, and the key is set to the empty string. The build warns:
+The capture subshell runs inside the build sandbox. The Keychain (`securityd`), the 1Password CLI, the network, SSH agent sockets, and writes under `~` are all unavailable to it. A line like `export KEY=$(security find-generic-password … -w)` or `export KEY=$(op read …)` works in your terminal, but during the build the substitution fails, `export` still exits 0, and the key is set to the empty string. The build fails:
 
 ```
-warning: ACME_API_KEY is set but empty; Secrets.acmeAPIKey will be ""
+error: environment variable ACME_API_KEY is set but empty; Secrets.acmeAPIKey needs a value
 ```
 
 Keep plain `export KEY=value` lines in a sidecar file instead — gitignored, `chmod 600` — and point the [envFile directive](<doc:EnvFileDirective>) at it.

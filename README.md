@@ -86,6 +86,7 @@ Each top-level identifier followed by `:` (with no value) is an environment sect
 The parser is deliberately strict:
 
 - Property names and env-var names must be bare ASCII identifiers (`[A-Za-z_][A-Za-z0-9_]*`). No quoting.
+- An env-var name may end in `?` (`analyticsKey: ANALYTICS_KEY?`) to allow an empty value. The marker belongs to that one line, so in a sectioned config staging can allow an empty value while production requires one. No space before the `?`.
 - Property names may not be Swift keywords (`class`, `default`, …; `open` is allowed), member names Swift rejects (`Type`, `Protocol`, `_`), names the generated enum reserves for itself (`salt`, `decode`, and `Swift` and `Foundation`, the module names its decode shim qualifies library symbols with), or `envFile` — any of these would produce a non-compiling or ambiguous generated file, so the parser rejects them up front. `Data`, `String`, `UTF8`, and the like are fine.
 - `#` at the start of a line is a comment. Inline comments after a value are not supported.
 - Blank lines are fine. Tabs are not — anywhere.
@@ -96,7 +97,7 @@ The parser is deliberately strict:
 
 The full rules live in the [Config Grammar](https://heirloomlogic.github.io/Tightlip/documentation/tightlipcore/configgrammar) reference.
 
-Every declared secret is required at build time. If an env var is unset, the build fails with one `error:` line per missing variable — all of them in the same build. An env var set to the empty string counts as set, with a `warning:` in the log, since that's usually a leftover `export KEY=` or a `$(…)` substitution that failed inside the build sandbox (see [Sourcing environment variables](#sourcing-environment-variables)). Truly optional values should be read from `ProcessInfo` at runtime rather than declared here.
+Every declared secret is required at build time. If an env var is unset or set to the empty string, the build fails with one `error:` line per variable, all of them in the same build. An empty value is usually a leftover `export KEY=` or a `$(…)` substitution that failed inside the build sandbox (see [Sourcing environment variables](#sourcing-environment-variables)). If empty is a legitimate value, mark the env-var name with `?`; the variable must still be set. Values that may be absent altogether should be read from `ProcessInfo` at runtime rather than declared here.
 
 ### Naming convention
 
@@ -163,7 +164,7 @@ If the configured file doesn't exist (typical on CI), the tool uses the build en
 
 The sourced file and the forwarded file are tracked as build inputs alongside `Secrets.yml`, and the plugin rewrites the forwarded file only when its contents change. Editing the env file, or changing `TIGHTLIP_ENV` or a declared variable's value in the build environment, re-runs generation on the next build — no clean needed.
 
-The capture runs inside the build sandbox, where the Keychain (`securityd`), the 1Password CLI, the network, SSH agent sockets, and writes under `~` are unavailable. An env-file line like `export KEY=$(security find-generic-password … -w)` or `export KEY=$(op read …)` still exits 0 there and sets the key to the empty string, which the build flags with `warning: KEY is set but empty; …`. Keep plain `export KEY=value` lines in a gitignored, 0600 sidecar file and point the [`envFile:` directive](#overriding-the-sourced-file) at it.
+The capture runs inside the build sandbox, where the Keychain (`securityd`), the 1Password CLI, the network, SSH agent sockets, and writes under `~` are unavailable. An env-file line like `export KEY=$(security find-generic-password … -w)` or `export KEY=$(op read …)` still exits 0 there and sets the key to the empty string, which fails the build with `error: environment variable KEY is set but empty; …`. Keep plain `export KEY=value` lines in a gitignored, 0600 sidecar file and point the [`envFile:` directive](#overriding-the-sourced-file) at it.
 
 One caveat: `zsh -f` skips all startup files *except* the system-wide `/etc/zshenv`. On machines where IT tooling lives there (some managed Macs), that file runs during capture too — if sourcing is slow or noisy, check there as well as your own env file.
 
@@ -214,7 +215,7 @@ Tightlip intentionally has no auto-discovered `.env` feature: the directive abov
 
 **`error: environment variable X must be set to generate Secrets.Y`** — the env var is unset in both the sourced file and the build environment. Every missing variable is reported in the same build, followed by a single `note: set the missing variable(s) in your shell, ~/.zshenv (for Xcode.app), or your CI environment`. The `note:` line above each error lists everything visible with the same prefix (e.g. `ACME_*`), which usually points at a typo. Confirm the key exists in your `envFile` (default `~/.zshenv`).
 
-**`warning: X is set but empty; Secrets.Y will be ""`** — usually a leftover `export KEY=`, or a `$(security …)` / `$(op read …)` substitution in the env file that failed inside the build sandbox. Use a literal value; see [Sourcing environment variables](#sourcing-environment-variables).
+**`error: environment variable X is set but empty; Secrets.Y needs a value`** — usually a leftover `export KEY=`, or a `$(security …)` / `$(op read …)` substitution in the env file that failed inside the build sandbox. Use a literal value; see [Sourcing environment variables](#sourcing-environment-variables). If empty is intended, write the name as `X?` in `Secrets.yml`. Empty and missing variables are reported together in one build, followed by one `note:` of guidance for each kind.
 
 **`warning: X from the build environment overrides the different value /path exports; …`** — the terminal or Xcode session that launched the build still exports an old value. If the file is current, restart it.
 

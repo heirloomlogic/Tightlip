@@ -11,6 +11,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - End-to-end test coverage that compiles and executes a generated `Secrets` enum, guarding against generation-validity regressions, plus a CI fixture package (`Fixtures/DemoApp`) that builds a real consumer with the plugin attached, asserts the generated value, proves env-file edits re-trigger generation without a clean, and proves build-environment values reach the tool and a `TIGHTLIP_ENV` flip regenerates.
 - An oldest-supported-toolchain CI job (Xcode 16.3, pinned to `macos-15`).
 - Parse error naming invisible characters (no-break space, zero-width space, stray CR) with column.
+- A `?` after an env-var name in `Secrets.yml` (`analyticsKey: ANALYTICS_KEY?`) allows that variable to be empty. It applies per line, so sections can differ. An unset variable is still an error.
 
 ### Changed
 - Environment inference now requires exactly one prod-named section and a stock `Debug`/`Release` configuration name; ambiguous cases — `prod` + `production` pairings, or a custom configuration name like `AppStore` — fail instead of guessing. **Breaking:** builds that relied on the previous guessing behavior with a custom configuration name must now set `TIGHTLIP_ENV` explicitly.
@@ -18,7 +19,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - All missing environment variables are reported in a single build — one `error:` line per variable, with the shell/CI guidance printed once — instead of one variable per fix-and-rebuild cycle.
 - Parse errors print as `path:line: error: reason` so Xcode attributes them to the line; section-level errors carry the header's line number.
 - The generated shim spells library symbols module-qualified, so consumer types named `Data`/`UTF8` no longer break it; `Data`, `String`, `UInt8`, `UTF8`, `fatalError`, `open` are allowed as secret names; `Swift` and `Foundation` are now reserved.
-- An empty declared env var's diagnostic is now a `warning:` (previously `note:`); a new `warning:` when the build environment overrides a different, non-empty value the env file exports for a declared variable (a `note:` for `TIGHTLIP_ENV`).
+- **Breaking:** a declared env var set to the empty string fails the build with `error: environment variable X is set but empty; …` (previously an empty value built silently with no warning). Empty and missing variables are reported together in one build, one `error:` per variable, with shared guidance printed once. Mark variables that may legitimately be empty with `?`. `ParsedSecret` gains `allowsEmpty`, `resolveSecret` throws the new `ConfigError.emptyEnvironmentVariable`, and `envFile: NAME?` is rejected as ambiguous, like `envFile: NAME`.
+- A new `warning:` when the build environment overrides a different, non-empty value the env file exports for a declared variable (a `note:` for `TIGHTLIP_ENV`).
 - The generated file is not rewritten when unchanged (Xcode projects re-run build-tool commands every build; this avoids recompiling it).
 - ~19x faster decode in unoptimized builds.
 

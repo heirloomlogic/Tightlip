@@ -29,11 +29,71 @@ struct GenerateSecretsFileTests {
         #expect(!FileManager.default.fileExists(atPath: run.outputURL.path))
     }
 
-    @Test func emptyValueIsAWarning() throws {
+    @Test func emptyValueIsAnError() throws {
         let run = try Run(config: "apiKey: TIGHTLIP_GEN_KEY")
         let result = run.generate(processEnvironment: ["TIGHTLIP_GEN_KEY": ""])
-        #expect(result.succeeded)
-        #expect(result.lines == [#"warning: TIGHTLIP_GEN_KEY is set but empty; Secrets.apiKey will be """#])
+        #expect(!result.succeeded)
+        #expect(
+            result.errors == [
+                "error: environment variable TIGHTLIP_GEN_KEY is set but empty; Secrets.apiKey needs a value"
+            ])
+        #expect(result.lines.filter { $0.hasPrefix("note: ") && $0.contains("'?'") }.count == 1)
+        // The typo-hunting note is for missing names; an empty variable was found.
+        #expect(!result.lines.contains { $0.contains("with prefix") }, "output: \(result.lines)")
+        #expect(!FileManager.default.fileExists(atPath: run.outputURL.path))
+    }
+
+    @Test func questionMarkAllowsEmptyValue() throws {
+        let run = try Run(config: "apiKey: TIGHTLIP_GEN_KEY?")
+        let result = run.generate(processEnvironment: ["TIGHTLIP_GEN_KEY": ""])
+        #expect(result.succeeded, "output: \(result.lines)")
+        #expect(result.lines.isEmpty, "unexpected output: \(result.lines)")
+        #expect(try run.decoded("apiKey") == "")
+    }
+
+    @Test func questionMarkDoesNotAllowUnset() throws {
+        let run = try Run(config: "apiKey: TIGHTLIP_GEN_KEY?")
+        let result = run.generate(processEnvironment: [:])
+        #expect(!result.succeeded)
+        #expect(
+            result.errors == ["error: environment variable TIGHTLIP_GEN_KEY must be set to generate Secrets.apiKey"])
+    }
+
+    @Test func reportsEmptyAndMissingTogetherWithEachGuidanceOnce() throws {
+        let run = try Run(
+            config: "a: TIGHTLIP_GEN_A\nb: TIGHTLIP_GEN_B\nc: TIGHTLIP_GEN_C\nd: TIGHTLIP_GEN_D\ne: TIGHTLIP_GEN_E?")
+        let result = run.generate(processEnvironment: [
+            "TIGHTLIP_GEN_A": "", "TIGHTLIP_GEN_C": "", "TIGHTLIP_GEN_D": "set", "TIGHTLIP_GEN_E": "",
+        ])
+        #expect(!result.succeeded)
+        #expect(
+            result.errors == [
+                "error: environment variable TIGHTLIP_GEN_A is set but empty; Secrets.a needs a value",
+                "error: environment variable TIGHTLIP_GEN_B must be set to generate Secrets.b",
+                "error: environment variable TIGHTLIP_GEN_C is set but empty; Secrets.c needs a value",
+            ])
+        #expect(result.lines.filter { $0.contains("set the missing variable(s)") }.count == 1)
+        #expect(result.lines.filter { $0.hasPrefix("note: ") && $0.contains("'?'") }.count == 1)
+        #expect(result.lines.filter { $0.contains("with prefix") }.count == 1)
+    }
+
+    @Test func questionMarkAppliesOnlyToItsSection() throws {
+        let config = "staging:\n  k: TIGHTLIP_GEN_S?\nproduction:\n  k: TIGHTLIP_GEN_P"
+        let environment = ["TIGHTLIP_GEN_S": "", "TIGHTLIP_GEN_P": ""]
+
+        let staging = try Run(config: config)
+        let stagingResult = staging.generate(
+            processEnvironment: environment.merging(["TIGHTLIP_ENV": "staging"]) { $1 })
+        #expect(stagingResult.succeeded, "output: \(stagingResult.lines)")
+
+        let production = try Run(config: config)
+        let productionResult = production.generate(
+            processEnvironment: environment.merging(["TIGHTLIP_ENV": "production"]) { $1 })
+        #expect(!productionResult.succeeded)
+        #expect(
+            productionResult.errors == [
+                "error: environment variable TIGHTLIP_GEN_P is set but empty; Secrets.k needs a value"
+            ])
     }
 
     @Test func parseErrorIsAttributedToTheConfigLine() throws {
@@ -118,6 +178,20 @@ struct GenerateSecretsFileTests {
         #expect(warnings.count == 1, "output: \(result.lines)")
         #expect(!result.lines.joined().contains("rotated-new"))
         #expect(!result.lines.joined().contains("revoked-old"))
+    }
+
+    @Test func buildEnvironmentOverridingWithEmptyIsWarnedAndFails() throws {
+        // The override warning explains where the empty value came from.
+        let run = try Run(config: "envFile: ./local.env\napiKey: TIGHTLIP_GEN_KEY")
+        try "export TIGHTLIP_GEN_KEY=from-file\n".write(
+            to: run.directory.appendingPathComponent("local.env"), atomically: true, encoding: .utf8)
+        let result = run.generate(processEnvironment: ["TIGHTLIP_GEN_KEY": ""])
+        #expect(!result.succeeded)
+        #expect(result.lines.filter { $0.hasPrefix("warning: TIGHTLIP_GEN_KEY from the build environment") }.count == 1)
+        #expect(
+            result.errors == [
+                "error: environment variable TIGHTLIP_GEN_KEY is set but empty; Secrets.apiKey needs a value"
+            ])
     }
 
     @Test func overriddenTightlipEnvIsOnlyANote() throws {

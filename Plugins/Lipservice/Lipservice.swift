@@ -195,16 +195,21 @@ private func writeForwardedEnvironment(configLines: [String], to url: URL) -> Bo
     return true
 }
 
-/// Every identifier on the right of a `name: VALUE` line, in any section, plus
-/// `TIGHTLIP_ENV`. Deliberately looser than the real grammar: an extra name only costs
-/// an unused entry, and the tool rejects malformed configs anyway.
+/// Every identifier on the right of a `name: VALUE` or `name: VALUE?` line, in any
+/// section, plus `TIGHTLIP_ENV`. The `?` (which allows an empty value) is not part of the
+/// variable's name. Deliberately looser than the real grammar (`splitMapping` in
+/// TightlipCore): an extra name only costs an unused entry, and the tool rejects
+/// malformed configs anyway.
 private func forwardedNames(configLines: [String]) -> Set<String> {
     var names: Set<String> = ["TIGHTLIP_ENV"]
     for rawLine in configLines {
         let stripped = rawLine.trimmingCharacters(in: .whitespacesAndNewlines)
         if stripped.hasPrefix("#") { continue }
         guard let colon = stripped.firstIndex(of: ":") else { continue }
-        let value = stripped[stripped.index(after: colon)...].trimmingCharacters(in: .whitespaces)
+        var value = stripped[stripped.index(after: colon)...].trimmingCharacters(in: .whitespaces)
+        if value.hasSuffix("?") {
+            value.removeLast()
+        }
         if isIdentifier(value) {
             names.insert(value)
         }

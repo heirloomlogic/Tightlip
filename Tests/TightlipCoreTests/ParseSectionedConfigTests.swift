@@ -89,7 +89,30 @@ struct ParseSectionedConfigTests {
         }
     }
 
+    @Test func questionMarkSuffixAppliesPerSection() throws {
+        // Staging may allow an empty analytics key while production requires one.
+        let text = """
+            staging:
+              analyticsKey: STAGING_ANALYTICS_KEY?
+            production:
+              analyticsKey: PROD_ANALYTICS_KEY
+            """
+        guard case .sectioned(let sections) = try parseYAMLConfig(text, path: "t.yml") else {
+            Issue.record("expected .sectioned")
+            return
+        }
+        #expect(
+            sections[0].secrets == [
+                ParsedSecret(name: "analyticsKey", envVar: "STAGING_ANALYTICS_KEY", allowsEmpty: true)
+            ])
+        #expect(sections[1].secrets == [ParsedSecret(name: "analyticsKey", envVar: "PROD_ANALYTICS_KEY")])
+    }
+
     // MARK: Errors
+
+    @Test func misplacedQuestionMarkInSectionIsError() {
+        expectParseError("staging:\n  k: S_KEY ?", line: 2, reasonContains: "expected")
+    }
 
     @Test func mismatchedSectionKeysIsError() {
         let text = """

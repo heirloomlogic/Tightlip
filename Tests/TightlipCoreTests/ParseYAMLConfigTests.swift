@@ -68,7 +68,27 @@ struct ParseYAMLConfigFlatTests {
         #expect(result == [ParsedSecret(name: "_k", envVar: "_E")])
     }
 
+    @Test func questionMarkSuffixAllowsEmpty() throws {
+        let result = try parseFlat("a: APP_A?\nb: APP_B", path: "t.yml")
+        #expect(
+            result == [
+                ParsedSecret(name: "a", envVar: "APP_A", allowsEmpty: true),
+                ParsedSecret(name: "b", envVar: "APP_B"),
+            ])
+        #expect(result.map(\.allowsEmpty) == [true, false])
+    }
+
+    @Test func questionMarkSuffixToleratesTrailingSpaces() throws {
+        let result = try parseFlat("a: APP_A?   ", path: "t.yml")
+        #expect(result == [ParsedSecret(name: "a", envVar: "APP_A", allowsEmpty: true)])
+    }
+
     // MARK: Errors
+
+    @Test(arguments: ["a: APP_A ?", "a: APP_A??", "a: ?", "a: ?APP_A", "a?: APP_A", "a: APP?_A"])
+    func misplacedQuestionMarkIsParseError(line: String) {
+        expectParseError(line, line: 1, reasonContains: "expected")
+    }
 
     @Test func emptyFileIsParseError() {
         expectParseError("", line: nil, reasonContains: "no secrets")
@@ -223,6 +243,8 @@ struct ParseYAMLConfigFlatTests {
     @Test func nonParseDiagnosticsKeepTheErrorPrefix() {
         let error = ConfigError.missingEnvironmentVariable(envVar: "K", property: "Secrets.k")
         #expect(error.diagnostic == "error: environment variable K must be set to generate Secrets.k")
+        let empty = ConfigError.emptyEnvironmentVariable(envVar: "K", property: "Secrets.k")
+        #expect(empty.diagnostic == "error: environment variable K is set but empty; Secrets.k needs a value")
     }
 
     @Test func parseLineAppearsInFormattedMessage() {
