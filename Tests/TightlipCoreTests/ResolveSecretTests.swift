@@ -10,10 +10,24 @@ struct ResolveSecretTests {
         #expect(resolved.value == "rc_abc")
     }
 
-    @Test func preservesEmptyEnvValue() throws {
+    @Test func throwsWhenEnvValueIsEmpty() {
         let parsed = ParsedSecret(name: "k", envVar: "FOO")
+        #expect(throws: ConfigError.emptyEnvironmentVariable(envVar: "FOO", property: "Secrets.k")) {
+            _ = try resolveSecret(parsed, environment: ["FOO": ""])
+        }
+    }
+
+    @Test func allowsEmptyEnvValueWhenMarked() throws {
+        let parsed = ParsedSecret(name: "k", envVar: "FOO", allowsEmpty: true)
         let resolved = try resolveSecret(parsed, environment: ["FOO": ""])
         #expect(resolved.value == "")
+    }
+
+    @Test func markedSecretStillThrowsWhenEnvVarMissing() {
+        let parsed = ParsedSecret(name: "k", envVar: "FOO", allowsEmpty: true)
+        #expect(throws: ConfigError.missingEnvironmentVariable(envVar: "FOO", property: "Secrets.k")) {
+            _ = try resolveSecret(parsed, environment: [:])
+        }
     }
 
     @Test func throwsWhenEnvVarMissing() {

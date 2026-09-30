@@ -19,7 +19,8 @@ struct GeneratedCodeIntegrationTests {
             (name: "empty", value: ""),
         ]
 
-        let config = expected.map { "\($0.name): TIGHTLIP_IT_\($0.name.uppercased())" }
+        // The empty value needs the `?` marker, or resolution rejects it.
+        let config = expected.map { "\($0.name): TIGHTLIP_IT_\($0.name.uppercased())\($0.value.isEmpty ? "?" : "")" }
             .joined(separator: "\n")
         let environment = Dictionary(
             uniqueKeysWithValues: expected.map { ("TIGHTLIP_IT_\($0.name.uppercased())", $0.value) }

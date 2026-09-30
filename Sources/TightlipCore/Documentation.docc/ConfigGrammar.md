@@ -9,6 +9,7 @@ Tightlip parses a small, strict subset of YAML. The parser rejects anything ambi
 ## Rules
 
 - Property names and env-var names must be bare ASCII identifiers (`[A-Za-z_][A-Za-z0-9_]*`). No quoting.
+- An env-var name may end in `?`, written with no space before it (`analyticsKey: ANALYTICS_KEY?`), to allow an empty value. The marker applies to that line only: in a sectioned config, each section decides for itself.
 - Property names may not be any of the following, which would render a non-compiling (or ambiguous) generated file; the parser rejects them with a line number instead:
   - Swift keywords (`class`, `default`, …; `open` is allowed) or the member names Swift rejects outright (`Type`, `Protocol`, `_`);
   - names the generated enum reserves for itself: `salt` and `decode`, used by its decode shim, and `Swift` and `Foundation`, the module names the shim qualifies library symbols with (`Swift.String`, `Foundation.Data`) so that neither a property nor a type of yours named `Data` or `UTF8` can shadow them;
@@ -19,7 +20,7 @@ Tightlip parses a small, strict subset of YAML. The parser rejects anything ambi
 - The file must be UTF-8.
 - Flat mode: no leading whitespace on mapping lines.
 - Sectioned mode: section headers at column 1, content at exactly 2-space indent.
-- Every declared secret is required at build time. If an env var is unset, the build fails with a message pointing at the missing variable (an env var set to the empty string counts as set, with a `warning:` in the log). Truly optional values should be read from `ProcessInfo` at runtime rather than declared here.
+- Every declared secret is required at build time. If an env var is unset, or set to the empty string without a `?` marker, the build fails with one `error:` per variable, all reported in the same build. `?` does not make a variable optional: unset is still an error. Values that may be absent altogether should be read from `ProcessInfo` at runtime rather than declared here.
 - Duplicate keys, empty files, and anything else outside this grammar are parse errors with a line number.
 
 ## Format Detection
@@ -56,6 +57,7 @@ The line number is omitted for whole-file errors like an empty config. Section-l
 - **Quoted values:** `foo: "BAR"` fails — quotes aren't accepted.
 - **Inline comments:** `foo: BAR # comment` fails — comments are line-level only.
 - **Hyphenated identifiers:** `revenue-cat-key: ...` fails — use camelCase Swift identifiers.
+- **A space before `?`:** `foo: BAR ?` fails. Write `foo: BAR?`.
 
 ## See Also
 

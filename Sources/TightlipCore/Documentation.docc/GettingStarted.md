@@ -57,7 +57,7 @@ Reference the generated enum in your code:
 let client = RevenueCat(apiKey: Secrets.revenueCatAPIKey)
 ```
 
-If `REVENUECAT_API_KEY` is unset, the build fails with a clear error pointing at the missing variable. Every declared secret is required.
+If `REVENUECAT_API_KEY` is unset or empty, the build fails with an error naming the variable. Every declared secret is required.
 
 ## What Just Happened
 
