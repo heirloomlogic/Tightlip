@@ -59,6 +59,21 @@ let client = RevenueCat(apiKey: Secrets.revenueCatAPIKey)
 
 If `REVENUECAT_API_KEY` is unset or empty, the build fails with an error naming the variable. Every declared secret is required.
 
+## Using the Generated API
+
+The generated `nonisolated enum Secrets` lives in the consuming target's module. Read its `String` properties directly: no `import Tightlip`, initialization, or actor hop is needed. Keep the generated `Tightlip.swift` in the build directory; commit `Secrets.yml`, which contains variable names, rather than generated code or secret values. For access from another module, see <doc:SharingAcrossModules>.
+
+## Adding, Renaming, and Rotating Secrets
+
+- **Add:** export the new variable in your env file or build environment, add its property mapping to `Secrets.yml`, build, and use `Secrets.propertyName`. With sectioned configs, add the property to every section; only the selected section's variables need values for that build. See <doc:ConfigGrammar> and <doc:SectionedConfigs>.
+- **Rename:** update the property in every section and all Swift call sites. If renaming the environment variable instead, update the mapping and the corresponding local and CI exports.
+- **Rotate:** update the variable's value and rebuild each affected app/environment. Tightlip embeds values at build time; deployed apps need a new build to receive the change. Direct edits to the configured env file or declared build-environment variables trigger regeneration; files read indirectly by the env file are not tracked. See <doc:EnvironmentSourcing> and <doc:CheckingConfig>.
+- **Remove:** delete the property from every section and remove its call sites; remove unused exports from local and CI configuration.
+
+When replacing a hardcoded value, also check tracked fixtures, snapshots, and generated artifacts for copies without printing the value into logs. Removing a literal from current source does not remove it from Git history; treat an exposed credential as compromised and rotate it.
+
+Validate the selected environment with <doc:CheckingConfig>, then build the consuming target. A successful config check verifies secret resolution, not compilation. Use <doc:ContinuousIntegration> for every CI lane that compiles the target and <doc:Troubleshooting> for failures.
+
 ## What Just Happened
 
 At build time Tightlip:
